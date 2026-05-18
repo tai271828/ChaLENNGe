@@ -27,6 +27,8 @@ import tensorflow as tf
 import keras
 from keras import backend as K
 
+from utils import D4Symmetry, AlgReconstruction, D4AntiSymmetry
+
 # ──────────────────────────────────────────────
 # Helpers — must match training definitions
 # ──────────────────────────────────────────────
