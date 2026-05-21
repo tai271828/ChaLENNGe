@@ -38,7 +38,6 @@ MODEL_NAME: str = "d4equivariant"  # "d4equivariant" | "resnet"
 # Artifact paths
 # ---------------------------------------------------------------------------
 ARTIFACTS_DIR = Path(__file__).resolve().parent / "artifacts-run-all-tensorflow"
-DATASET_PATH  = ARTIFACTS_DIR / "example_dataset.npz"
 
 
 def _make_run_dir(model_name: str, run_name: str | None, timestamp: str) -> Path:
@@ -75,17 +74,17 @@ def _latest_run_dir(model_name: str) -> Path:
 # 1. Dataset generation
 # ---------------------------------------------------------------------------
 
-def generate(n_samples: int = 100_000) -> None:
-    """Generate BGK collision pairs and save to DATASET_PATH."""
-    ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
+def generate(dataset_path: Path, n_samples: int = 100_000) -> None:
+    """Generate BGK collision pairs and save to dataset_path."""
+    dataset_path.parent.mkdir(parents=True, exist_ok=True)
     print(f"Generating {n_samples} training samples ...")
     generate_dataset(
-        DATASET_PATH,
+        dataset_path,
         n_samples=n_samples,
         u_abs_min=1e-15, u_abs_max=0.01,
         sigma_min=1e-15, sigma_max=5e-4,
     )
-    print(f"  Saved -> {DATASET_PATH}")
+    print(f"  Saved -> {dataset_path}")
 
 
 # ---------------------------------------------------------------------------
@@ -114,6 +113,8 @@ def train(
     learning_rate: float = 1e-3,
     tensorboard: bool = False,
     run_name: str | None = None,
+    dataset_path: Path | None = None,
+    run_dir: Path | None = None,
 ) -> keras.Model:
     """Load the dataset, train the selected network, and save artifacts under a timestamped run dir."""
     if model_name not in MODEL_REGISTRY:
@@ -121,12 +122,15 @@ def train(
 
     K.set_floatx('float64')
 
-    timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    run_dir = _make_run_dir(model_name, run_name, timestamp)
+    if run_dir is None:
+        timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        run_dir = _make_run_dir(model_name, run_name, timestamp)
+    if dataset_path is None:
+        dataset_path = run_dir / "example_dataset.npz"
     paths = _run_paths(run_dir)
     print(f"Run dir: {run_dir}")
 
-    feq, fpre, fpost = load_data(DATASET_PATH)
+    feq, fpre, fpost = load_data(dataset_path)
 
     # Normalise on density so all inputs/outputs sum to 1
     feq   = feq   / np.sum(feq,   axis=1)[:, np.newaxis]
@@ -272,6 +276,7 @@ def simulate(
 
 
 def _plot_results(dumpfile, niter, dumpit, nx, ny, tau, cs2, decay_plot, fields_dir):
+    fields_dir.mkdir(parents=True, exist_ok=True)
     tLst = np.arange(0, niter, dumpit)
     nu   = (tau - 0.5) * cs2
     w_fig, h_fig = 3.46 * 3, 2.14 * 3
@@ -352,13 +357,18 @@ def _parse_args():
 if __name__ == "__main__":
     args = _parse_args()
 
+    timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    run_dir = _make_run_dir(args.model, args.run_name, timestamp)
+    dataset_path = run_dir / "example_dataset.npz"
+
     if not args.skip_generate:
-        generate()
+        generate(dataset_path)
     if not args.skip_train:
         train(model_name=args.model, batch_size=args.batch_size,
               n_epochs=args.n_epochs, patience=args.patience,
               learning_rate=args.learning_rate,
-              tensorboard=args.tensorboard, run_name=args.run_name)
+              tensorboard=args.tensorboard,
+              dataset_path=dataset_path, run_dir=run_dir)
     if not args.skip_simulate:
-        run_dir = Path(args.run_dir) if args.run_dir else None
-        simulate(model_name=args.model, run_dir=run_dir)
+        sim_run_dir = Path(args.run_dir) if args.run_dir else run_dir
+        simulate(model_name=args.model, run_dir=sim_run_dir)
