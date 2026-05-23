@@ -1,5 +1,4 @@
 import numpy as np
-import tensorflow as tf
 import keras
 
 
@@ -77,8 +76,8 @@ def LBrot90(f, k=1):
     """
     # Index 0 (rest) is unchanged.
     # Indices 1–4 (axis-aligned) and 5–8 (diagonal) each cycle as a group.
-    return tf.concat(
-        [f[:, 0, None], tf.roll(f[:, 1:5], k, axis=-1), tf.roll(f[:, 5:], k, axis=-1)],
+    return keras.ops.concatenate(
+        [f[:, 0, None], keras.ops.roll(f[:, 1:5], k, axis=-1), keras.ops.roll(f[:, 5:], k, axis=-1)],
         axis=-1,
     )
 
@@ -90,7 +89,7 @@ def LBmirror(f):
     are exchanged with their -y counterparts:
         2 (N) ↔ 4 (S),  5 (NE) ↔ 8 (SE),  6 (NW) ↔ 7 (SW)
     """
-    return tf.concat(
+    return keras.ops.concatenate(
         [
             f[:, 0, None],  # rest — unchanged
             f[:, 1, None],  # East — unchanged (on mirror axis)
@@ -219,7 +218,7 @@ class AlgReconstruction(keras.layers.Layer):
         df8 = -0.5 * (df[:, 0] + df[:, 1] + df[:, 3] + 2 * df[:, 4] + 2 * df[:, 7])
 
         # Reassemble the full correction vector with the reconstructed directions
-        df = tf.concat(
+        df = keras.ops.concatenate(
             [
                 df[:, 0, None],
                 df[:, 1, None],

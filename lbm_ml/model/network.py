@@ -1,7 +1,6 @@
 from collections.abc import Callable
-
+from typing import cast
 import keras
-import tensorflow as tf
 from keras import layers
 from keras.models import Sequential
 from keras.layers import Dense
@@ -85,7 +84,7 @@ def _wrap_d4(
 
     the_output = layers.Average()(output_lst)
     model = keras.Model(inputs=the_input, outputs=the_output)
-    model.compile(loss=loss, optimizer=optimizer, jit_compile=False)
+    model.compile(loss=loss, optimizer=optimizer, jit_compile=cast(str, False))
     return model
 
 
@@ -164,9 +163,9 @@ class LENNLayer(keras.layers.Layer):
     def build(self, input_shape):
         C_in = int(input_shape[-1])
 
-        orbit_idx = compute_d2q9_orbit_indices()       # (9, 9)
-        n_orbits = int(orbit_idx.max()) + 1            # = 15 for D2Q9
-        self._orbit_idx = tf.constant(orbit_idx, dtype=tf.int32)
+        orbit_idx = compute_d2q9_orbit_indices()  # (9, 9)
+        n_orbits = int(orbit_idx.max()) + 1  # = 15 for D2Q9
+        self._orbit_idx = orbit_idx.astype("int32")
 
         self.A_tilde = self.add_weight(
             name="A_tilde",
@@ -175,9 +174,9 @@ class LENNLayer(keras.layers.Layer):
         )
 
         if self.use_bias:
-            bias_idx = compute_d2q9_bias_orbit_indices()   # (9,)
-            n_bias = int(bias_idx.max()) + 1               # = 3 for D2Q9
-            self._bias_idx = tf.constant(bias_idx, dtype=tf.int32)
+            bias_idx = compute_d2q9_bias_orbit_indices()  # (9,)
+            n_bias = int(bias_idx.max()) + 1  # = 3 for D2Q9
+            self._bias_idx = bias_idx.astype("int32")
             self.b_tilde = self.add_weight(
                 name="b_tilde",
                 shape=(n_bias, self.channels_out),
@@ -188,21 +187,23 @@ class LENNLayer(keras.layers.Layer):
 
     def call(self, x):
         # Reconstruct full (9, 9, C_in, C_out) weight tensor via orbit indexing
-        A_full = tf.gather(self.A_tilde, self._orbit_idx)
+        A_full = keras.ops.take(self.A_tilde, self._orbit_idx, axis=0)
         # out[b,i,a] = Σ_{j,c} A_full[i,j,c,a] * x[b,j,c]
-        out = tf.einsum("ijca,bjc->bia", A_full, x)
+        out = keras.ops.einsum("ijca,bjc->bia", A_full, x)
         if self.use_bias:
-            b_full = tf.gather(self.b_tilde, self._bias_idx)  # (9, C_out)
-            out = out + b_full[tf.newaxis]
+            b_full = keras.ops.take(self.b_tilde, self._bias_idx, axis=0)  # (9, C_out)
+            out = out + b_full[None]
         return self.activation_fn(out)
 
     def get_config(self):
         config = super().get_config()
-        config.update({
-            "channels_out": self.channels_out,
-            "activation": keras.activations.serialize(self.activation_fn),
-            "use_bias": self.use_bias,
-        })
+        config.update(
+            {
+                "channels_out": self.channels_out,
+                "activation": keras.activations.serialize(self.activation_fn),
+                "use_bias": self.use_bias,
+            }
+        )
         return config
 
 
@@ -233,17 +234,17 @@ def create_lenn_model(
     """
     inp = keras.Input(shape=(Q,))
 
-    x = keras.layers.Reshape((Q, 1))(inp)          # (batch, Q, 1)
+    x = keras.layers.Reshape((Q, 1))(inp)  # (batch, Q, 1)
     for c in channels:
         x = LENNLayer(c, activation=activation, use_bias=use_bias)(x)
     x = LENNLayer(1, activation="linear", use_bias=use_bias)(x)  # output ch
-    x = keras.layers.Reshape((Q,))(x)              # (batch, Q)
+    x = keras.layers.Reshape((Q,))(x)  # (batch, Q)
     x = keras.layers.Activation(ll_activation)(x)
 
     out = AlgReconstruction()(inp, x)
 
     model = keras.Model(inputs=inp, outputs=out)
-    model.compile(loss=loss, optimizer=optimizer, jit_compile=False)
+    model.compile(loss=loss, optimizer=optimizer, jit_compile=cast(str, False))
     return model
 
 
