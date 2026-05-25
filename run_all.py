@@ -161,12 +161,14 @@ def train(
     logger.info("Run dir: %s", run_dir)
 
     if data_dir is not None:
+        logger.info("Loading training data from simulator output in %s ...", data_dir)
         feq, fpre, fpost = load_simulation_pairs(
             data_dir,
             samples_per_step=samples_per_step,
             step_stride=step_stride,
             max_steps=max_steps,
         )
+        logger.info("Loaded %d samples from simulator output in %s", feq.shape[0], data_dir)
     else:
         feq, fpre, fpost = load_data(dataset_path)
 

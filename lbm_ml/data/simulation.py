@@ -37,10 +37,14 @@ moments of ``f_pre``.
 
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 
 import numpy as np
+from tqdm import tqdm
+
+logger = logging.getLogger(__name__)
 
 from lbm_ml.lattice.stencil import LB_stencil
 
@@ -135,8 +139,7 @@ def load_simulation_pairs(
     steps = _discover_steps(data_dir)
     if not steps:
         raise FileNotFoundError(
-            f"No 'fpre_*.npy' / 'fpost_*.npy' pairs found in {data_dir}. "
-            "Was the simulator run with --save-every N?"
+            f"No 'fpre_*.npy' / 'fpost_*.npy' pairs found in {data_dir}. " "Was the simulator run with --save-every N?"
         )
 
     steps = steps[::step_stride]
@@ -146,8 +149,7 @@ def load_simulation_pairs(
     rng = np.random.default_rng(seed)
     fpre_chunks: list[np.ndarray] = []
     fpost_chunks: list[np.ndarray] = []
-
-    for _step, fpre_path, fpost_path in steps:
+    for _step, fpre_path, fpost_path in tqdm(steps, desc="Loading simulation steps", unit="step"):
         fpre = np.load(fpre_path)
         fpost = np.load(fpost_path)
         if fpre.shape != fpost.shape or fpre.shape[-1] != 9:
@@ -168,20 +170,25 @@ def load_simulation_pairs(
         fpre_chunks.append(fpre)
         fpost_chunks.append(fpost)
 
+    logger.info("Concatenating %d chunks...", len(fpre_chunks))
     fpre = np.concatenate(fpre_chunks, axis=0)
     fpost = np.concatenate(fpost_chunks, axis=0)
+    logger.info("  -> %d total samples", fpre.shape[0])
 
     if drop_negative:
+        logger.info("Filtering negative populations...")
         keep = ~((fpre < 0).any(axis=1) | (fpost < 0).any(axis=1))
         fpre, fpost = fpre[keep], fpost[keep]
+        logger.info("  -> %d samples after filtering", fpre.shape[0])
 
+    logger.info("Computing equilibrium distributions...")
     feq = _equilibrium_from_populations(fpre)
+    logger.info("  -> Done.")
 
-    print(
-        f"Loaded simulator data from {data_dir}: "
-        f"{len(steps)} steps -> {fpre.shape[0]} collision pairs "
-        f"(samples_per_step={samples_per_step}, step_stride={step_stride}, "
-        f"drop_negative={drop_negative})"
+    logger.info(
+        "Loaded simulator data from %s: %d steps -> %d collision pairs "
+        "(samples_per_step=%s, step_stride=%d, drop_negative=%s)",
+        data_dir, len(steps), fpre.shape[0], samples_per_step, step_stride, drop_negative,
     )
     return feq, fpre, fpost
 
@@ -201,5 +208,5 @@ def consolidate_to_npz(
     out_npz = Path(out_npz)
     out_npz.parent.mkdir(parents=True, exist_ok=True)
     np.savez(out_npz, f_eq=feq, f_pre=fpre, f_post=fpost)
-    print(f"  Wrote consolidated dataset -> {out_npz} ({fpre.shape[0]} samples)")
+    logger.info("  Wrote consolidated dataset -> %s (%d samples)", out_npz, fpre.shape[0])
     return out_npz
