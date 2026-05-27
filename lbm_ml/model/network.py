@@ -11,6 +11,7 @@ from lbm_ml.lattice.symmetry import (
     D4Symmetry,
     D4AntiSymmetry,
     AlgReconstruction,
+    SymmetricAlgReconstruction,
     compute_d2q9_orbit_indices,
     compute_d2q9_bias_orbit_indices,
 )
@@ -301,7 +302,7 @@ def create_lenn_model(
     x = keras.layers.Reshape((Q,))(x)  # (batch, Q)
     x = keras.layers.Activation(ll_activation)(x)
 
-    out = AlgReconstruction()(inp, x)
+    out = SymmetricAlgReconstruction()(inp, x)
 
     model = keras.Model(inputs=inp, outputs=out)
     model.compile(loss=loss, optimizer=optimizer, jit_compile=cast(str, False))
@@ -364,7 +365,7 @@ def create_lenn_resnet_model(
     x = keras.layers.Reshape((Q,))(x)  # (batch, Q)
     x = keras.layers.Activation(ll_activation)(x)
 
-    out = AlgReconstruction()(inp, x)
+    out = SymmetricAlgReconstruction()(inp, x)
 
     model = keras.Model(inputs=inp, outputs=out)
     model.compile(loss=loss, optimizer=optimizer, jit_compile=cast(str, False))

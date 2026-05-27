@@ -235,3 +235,58 @@ class AlgReconstruction(keras.layers.Layer):
 
         # Add the correction back to the pre-collision state
         return fpre + df
+
+
+@keras.saving.register_keras_serializable(package="lbm")
+class SymmetricAlgReconstruction(keras.layers.Layer):
+    """Updated version of AlgReconstruction that projects onto the conservation manifold in a D4-equivariant way.
+
+    Project the network prediction onto the conservation manifold.
+
+    Enforces mass and momentum conservation by applying the minimum-norm
+    (pseudo-inverse) correction to the predicted correction vector df = fpred − fpre:
+
+        df_corrected[i] = df[i] − Δmass/9 − cx[i]·Δpx/6 − cy[i]·Δpy/6
+
+    where Δmass = Σ df_j, Δpx = Σ df_j cx_j, Δpy = Σ df_j cy_j, and the
+    denominators come from C Cᵀ = diag(9, 6, 6) for the D2Q9 stencil.
+
+    This projection is D4-equivariant because it depends only on the conservation
+    defects (scalars/vectors under D4) and the velocity components, not on any
+    privileged choice of population indices.  The previous implementation fixed
+    indices 2, 5, 8 (North, NE, SE), which broke equivariance.
+
+    Parameters
+    ----------
+    fpre  : pre-collision populations  (batch, 9) — provides the reference values
+    fpred : network output             (batch, 9) — the predicted correction
+
+    Returns
+    -------
+    Tensor of shape (batch, 9) — the physically consistent post-collision populations.
+    """
+
+    # D2Q9 velocity components, shape (9,)
+    _CX = keras.ops.cast([0, 1, 0, -1, 0, 1, -1, -1, 1], dtype="float64")
+    _CY = keras.ops.cast([0, 0, 1, 0, -1, 1, 1, -1, -1], dtype="float64")
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def call(self, fpre, fpred):
+        cx = keras.ops.cast(self._CX, fpred.dtype)
+        cy = keras.ops.cast(self._CY, fpred.dtype)
+
+        # Difference between predicted and pre-collision populations
+        df = fpred - fpre
+
+        # Conservation defects: how much df violates each law
+        d_mass = keras.ops.sum(df, axis=-1, keepdims=True)  # (batch, 1)
+        d_px = keras.ops.sum(df * cx, axis=-1, keepdims=True)  # (batch, 1)
+        d_py = keras.ops.sum(df * cy, axis=-1, keepdims=True)  # (batch, 1)
+
+        # Subtract the minimum-norm correction: C⁺ (C df)
+        # C⁺[i] = [1/9, cx[i]/6, cy[i]/6]  from (C Cᵀ)⁻¹ = diag(1/9, 1/6, 1/6)
+        df_corrected = df - d_mass / 9 - d_px * cx / 6 - d_py * cy / 6
+
+        return fpre + df_corrected
