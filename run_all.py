@@ -119,6 +119,7 @@ def train(
     step_stride: int = 1,
     max_steps: int | None = None,
     verbose: bool = True,
+    steps_per_execution: int = 1,
 ) -> keras.Model:
     """Load the dataset, train the selected network, and save artifacts under a timestamped run dir.
 
@@ -155,11 +156,15 @@ def train(
         loss=rmsre,
         optimizer=keras.optimizers.Adam(learning_rate=learning_rate),
         ll_activation="softmax",
+        steps_per_execution=steps_per_execution,
     )
 
     return fit_model(
         model,
-        fpre_train, fpost_train, fpre_test, fpost_test,
+        fpre_train,
+        fpost_train,
+        fpre_test,
+        fpost_test,
         paths=paths,
         n_epochs=n_epochs,
         patience=patience,
@@ -359,6 +364,12 @@ def _parse_args():
         "--run-dir", default=None, help="Explicit run directory to simulate from (default: latest run for --model)"
     )
     p.add_argument("--quiet", action="store_true", help="Suppress INFO logging (show WARNING+ only)")
+    p.add_argument(
+        "--steps-per-execution",
+        type=int,
+        default=2190,
+        help="Fuse N batches per tf.function call to reduce Python dispatch overhead (default: 2190). Total steps should be divisible by this to avoid truncation of the last incomplete batch.",
+    )
     return p.parse_args()
 
 
@@ -392,6 +403,7 @@ if __name__ == "__main__":
             step_stride=args.step_stride,
             max_steps=args.max_steps,
             verbose=not args.quiet,
+            steps_per_execution=args.steps_per_execution,
         )
     if not args.skip_simulate:
         sim_run_dir = Path(args.run_dir) if args.run_dir else run_dir

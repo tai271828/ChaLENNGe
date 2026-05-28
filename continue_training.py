@@ -79,7 +79,9 @@ def _count_tb_epochs(tb_log_dir: Path) -> int:
         return 0
 
 
-def _load_model(checkpoint: Path, model_name: str | None, learning_rate: float) -> keras.Model:
+def _load_model(
+    checkpoint: Path, model_name: str | None, learning_rate: float, steps_per_execution: int = 1
+) -> keras.Model:
     """Load a model from either a model.keras or a weights.keras checkpoint.
 
     Parameters
@@ -104,6 +106,8 @@ def _load_model(checkpoint: Path, model_name: str | None, learning_rate: float) 
             logger.info("Loading full model from %s ...", checkpoint)
             model = keras.models.load_model(str(checkpoint), custom_objects={"rmsre": rmsre})
             logger.info("  -> Optimizer state restored (true resume).")
+            if steps_per_execution > 1:
+                logger.info("  -> steps_per_execution ignored for full model resume (would reset optimizer state).")
             return model  # pyright: ignore[reportReturnType]
         except Exception:
             pass  # fall through to weights path
@@ -122,6 +126,7 @@ def _load_model(checkpoint: Path, model_name: str | None, learning_rate: float) 
         loss=rmsre,
         optimizer=keras.optimizers.Adam(learning_rate=learning_rate),
         ll_activation="softmax",
+        steps_per_execution=steps_per_execution,
     )
     model.load_weights(str(checkpoint))
     logger.info("  -> Weights loaded (optimizer state reset).")
@@ -159,6 +164,12 @@ def _parse_args():
     p.add_argument("--run-name", default="continued", help="Label added to the new run directory name")
     p.add_argument("--tensorboard", action="store_true")
     p.add_argument("--quiet", action="store_true", help="Suppress INFO logging")
+    p.add_argument(
+        "--steps-per-execution",
+        type=int,
+        default=2190,
+        help="Fuse N batches per tf.function call to reduce Python dispatch overhead (default: 2190). Total steps should be divisible by this to avoid truncation of the last incomplete batch.",
+    )
     return p.parse_args()
 
 
@@ -196,7 +207,7 @@ if __name__ == "__main__":
     else:
         logger.info("TensorBoard log: %s (epoch offset: %d)", paths["tb_log"], initial_epoch)
 
-    model = _load_model(checkpoint, args.model, args.learning_rate)
+    model = _load_model(checkpoint, args.model, args.learning_rate, args.steps_per_execution)
 
     fpre_train, fpre_test, fpost_train, fpost_test = load_training_data(
         data_dir=Path(args.data_dir),

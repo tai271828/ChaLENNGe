@@ -72,7 +72,8 @@ def resnet_sequential_model(
 
 
 def _wrap_d4(
-    sub_model_fn, loss, optimizer, Q, n_hidden_layers, n_per_layer, activation, ll_activation, bias
+    sub_model_fn, loss, optimizer, Q, n_hidden_layers, n_per_layer, activation, ll_activation, bias,
+    steps_per_execution: int = 1,
 ) -> keras.Model:
     """Wrap any inner sub-network factory in the D4-equivariant lift/pool pattern."""
     the_input = keras.Input(shape=(Q,))
@@ -86,7 +87,7 @@ def _wrap_d4(
 
     the_output = layers.Average()(output_lst)
     model = keras.Model(inputs=the_input, outputs=the_output)
-    model.compile(loss=loss, optimizer=optimizer, jit_compile=cast(str, False))
+    model.compile(loss=loss, optimizer=optimizer, jit_compile=cast(str, True), steps_per_execution=steps_per_execution)
     return model
 
 
@@ -99,6 +100,7 @@ def create_model(
     activation: str = "relu",
     ll_activation: str = "linear",
     bias: bool = False,
+    steps_per_execution: int = 1,
 ) -> keras.Model:
     """D4-equivariant network with a plain feed-forward inner sub-network.
 
@@ -108,7 +110,7 @@ def create_model(
       3. Enforce conservation laws (AlgReconstruction) on each branch output.
       4. Undo each transform (D4AntiSymmetry) then average.
     """
-    return _wrap_d4(sequential_model, loss, optimizer, Q, n_hidden_layers, n_per_layer, activation, ll_activation, bias)
+    return _wrap_d4(sequential_model, loss, optimizer, Q, n_hidden_layers, n_per_layer, activation, ll_activation, bias, steps_per_execution)
 
 
 def create_resnet_model(
@@ -120,6 +122,7 @@ def create_resnet_model(
     activation: str = "relu",
     ll_activation: str = "linear",
     bias: bool = False,
+    steps_per_execution: int = 1,
 ) -> keras.Model:
     """D4-equivariant network with a residual inner sub-network.
 
@@ -127,7 +130,8 @@ def create_resnet_model(
     skip connections (ResNet-style) instead of a plain sequential stack.
     """
     return _wrap_d4(
-        resnet_sequential_model, loss, optimizer, Q, n_hidden_layers, n_per_layer, activation, ll_activation, bias
+        resnet_sequential_model, loss, optimizer, Q, n_hidden_layers, n_per_layer, activation, ll_activation, bias,
+        steps_per_execution,
     )
 
 
@@ -165,6 +169,7 @@ def create_plain_model(
     activation: str = "relu",
     ll_activation: str = "linear",
     bias: bool = False,
+    steps_per_execution: int = 1,
 ) -> keras.Model:
     """Plain network with NO physics constraints (no D4 GAVG, no conservation reconstruction).
 
@@ -174,7 +179,7 @@ def create_plain_model(
     physics property satisfied; D8 symmetry (P2) and conservation (P3) are not.
     """
     model = plain_sequential(Q, depth, n_per_layer, activation, ll_activation, bias)
-    model.compile(loss=loss, optimizer=optimizer)
+    model.compile(loss=loss, optimizer=optimizer, steps_per_execution=steps_per_execution)
     return model
 
 
@@ -276,6 +281,7 @@ def create_lenn_model(
     activation: str = "relu",
     ll_activation: str = "linear",
     use_bias: bool = True,
+    steps_per_execution: int = 1,
     **_kwargs,
 ) -> keras.Model:
     """Lattice-equivariant neural network (LENN) collision operator surrogate.
@@ -305,7 +311,7 @@ def create_lenn_model(
     out = SymmetricAlgReconstruction()(inp, x)
 
     model = keras.Model(inputs=inp, outputs=out)
-    model.compile(loss=loss, optimizer=optimizer, jit_compile=cast(str, False))
+    model.compile(loss=loss, optimizer=optimizer, jit_compile=cast(str, True), steps_per_execution=steps_per_execution)
     return model
 
 
@@ -322,6 +328,7 @@ def create_lenn_resnet_model(
     activation: str = "relu",
     ll_activation: str = "linear",
     use_bias: bool = True,
+    steps_per_execution: int = 1,
     **_kwargs,
 ) -> keras.Model:
     """LENN with residual blocks (LENN+ResNet) collision operator surrogate.
@@ -368,7 +375,7 @@ def create_lenn_resnet_model(
     out = SymmetricAlgReconstruction()(inp, x)
 
     model = keras.Model(inputs=inp, outputs=out)
-    model.compile(loss=loss, optimizer=optimizer, jit_compile=cast(str, False))
+    model.compile(loss=loss, optimizer=optimizer, jit_compile=cast(str, True), steps_per_execution=steps_per_execution)
     return model
 
 
