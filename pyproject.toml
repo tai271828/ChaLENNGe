@@ -13,6 +13,8 @@ dependencies = [
     "setuptools>=70.0,<80.0",
     "tensorboard>=2.20.0",
     "tqdm>=4.67.3",
+    "pandas>=2.3.3",
+    "tabulate>=0.10.0",
 ]
 
 [dependency-groups]

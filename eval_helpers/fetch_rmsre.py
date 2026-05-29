@@ -24,12 +24,12 @@ Options:
 """
 
 import argparse
-import csv
 import math
 import re
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 from keras import backend as K
 import keras
 
@@ -75,7 +75,7 @@ def _resolve_models(inputs: list[str]) -> list[tuple[str, Path]]:
 
 def _extract_meta(title: str, model: keras.Model) -> dict[str, str]:
     """Extract training hyperparameters from optimizer config and folder name."""
-    meta: dict[str, str] = {}
+    meta: dict[str, str] = {"#params": f"{model.count_params():,}"}
     try:
         lr = model.optimizer.get_config().get("learning_rate")
         if lr is not None:
@@ -104,23 +104,14 @@ def _eval_model(
     return mean, stderr, _extract_meta(title, model)
 
 
-def _save_md(path: Path, results: list, meta_keys: list[str], best: tuple) -> None:
-    lines = ["| Model | RMSRE (mean ± stderr) |" + "".join(f" {k} |" for k in meta_keys)]
-    lines.append("|---|---|" + "".join("---|" for _ in meta_keys))
+def _build_df(results: list[tuple[str, float, float, dict[str, str]]]) -> pd.DataFrame:
+    """Build a DataFrame from evaluated results, expanding meta into columns."""
+    rows = []
     for title, mean, stderr, meta in results:
-        row = f"| {title} | {_sci_fmt(mean, stderr)} |"
-        row += "".join(f" {meta.get(k, '')} |" for k in meta_keys)
-        lines.append(row)
-    lines.append(f"\n**Best:** {best[0]} — {_sci_fmt(best[1], best[2])}")
-    path.write_text("\n".join(lines) + "\n")
-
-
-def _save_csv(path: Path, results: list, meta_keys: list[str]) -> None:
-    with path.open("w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["model", "rmsre_mean", "rmsre_stderr"] + meta_keys)
-        for title, mean, stderr, meta in results:
-            writer.writerow([title, mean, stderr] + [meta.get(k, "") for k in meta_keys])
+        row = {"model": title, "RMSRE": _sci_fmt(mean, stderr), "rmsre_mean": mean, "rmsre_stderr": stderr}
+        row.update(meta)
+        rows.append(row)
+    return pd.DataFrame(rows)
 
 
 def main():
@@ -150,35 +141,27 @@ def main():
     if args.sort:
         results.sort(key=lambda r: r[1], reverse=(args.sort == "desc"))
 
-    val_col = max(len(_sci_fmt(m, s)) for _, m, s, _ in results)
-    meta_keys = [k for k in ("bs", "ep", "lr") if any(k in r[3] for r in results)]
+    df = _build_df(results)
+    meta_cols = [k for k in ("#params", "bs", "ep", "lr") if k in df.columns]
+    display_cols = ["model", "RMSRE"] + meta_cols
+    csv_cols = ["model", "rmsre_mean", "rmsre_stderr"] + meta_cols
 
     if len(results) == 1:
         title, mean, stderr, meta = results[0]
-        meta_str = "  " + "  ".join(f"{k}={meta[k]}" for k in meta_keys if k in meta) if meta_keys else ""
+        meta_str = "  " + "  ".join(f"{k}={meta[k]}" for k in meta_cols if k in meta)
         print(f"\n{title}: RMSRE = {_sci_fmt(mean, stderr)}{meta_str}")
         return
 
-    col = max(len(t) for t, *_ in results)
-    meta_cols = {k: max(len(k), max(len(r[3].get(k, "")) for r in results)) for k in meta_keys}
-    header = f"{'Model':<{col}}   {'RMSRE (mean ± stderr)':<{val_col}}"
-    for k, w in meta_cols.items():
-        header += f"   {k:>{w}}"
-    print(f"\n{header}")
-    print("-" * len(header))
-    for title, mean, stderr, meta in results:
-        row = f"{title:<{col}}   {_sci_fmt(mean, stderr):<{val_col}}"
-        for k, w in meta_cols.items():
-            row += f"   {meta.get(k, ''):>{w}}"
-        print(row)
+    print()
+    print(df[display_cols].to_string(index=False))
 
-    best = min(results, key=lambda r: r[1])
-    print(f"\nBest: {best[0]}  {_sci_fmt(best[1], best[2])}")
+    best = df.loc[df["rmsre_mean"].idxmin()]
+    print(f"\nBest: {best['model']}  {best['RMSRE']}")
 
     if args.save:
         save_path = Path(args.save)
-        _save_md(save_path.with_suffix(".md"), results, meta_keys, best)
-        _save_csv(save_path.with_suffix(".csv"), results, meta_keys)
+        df[csv_cols].to_csv(save_path.with_suffix(".csv"), index=False)
+        df[display_cols].to_markdown(save_path.with_suffix(".md"), index=False)
         print(f"Saved {save_path.with_suffix('.md')} and {save_path.with_suffix('.csv')}")
 
 
