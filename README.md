@@ -9,6 +9,13 @@ using the dataset generated
 
 ![image](https://github.com/agabbana/learning_lbm_collision_operator/assets/90458863/7c9b7e56-819b-4bf6-adb2-1e32184d2711)
 
+### Background reading
+
+The network architectures embed the D4 lattice symmetry and conservation laws.
+For the group-equivariant deep-learning concepts needed to read the code (with
+file/line anchors into `lbm_ml/`), see
+[docs/equivariance-background.md](docs/equivariance-background.md).
+
 
 ### How to cite this work
 
