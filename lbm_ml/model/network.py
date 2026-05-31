@@ -82,15 +82,23 @@ def _wrap_d4(
     ll_activation,
     bias,
     steps_per_execution: int = 1,
+    use_conservation: bool = True,
 ) -> keras.Model:
-    """Wrap any inner sub-network factory in the D4-equivariant lift/pool pattern."""
+    """Wrap any inner sub-network factory in the D4-equivariant lift/pool pattern.
+
+    When use_conservation=False (e.g. softmax last layer), AlgReconstruction is
+    skipped — softmax already guarantees positivity and the normalize/denormalize
+    trick enforces mass conservation, so the algebraic reconstruction is redundant
+    and would break positivity.
+    """
     the_input = keras.Input(shape=(Q,))
 
     sub = sub_model_fn(Q, n_hidden_layers, n_per_layer, activation, ll_activation, bias)
 
     input_lst = D4Symmetry()(the_input)
     output_lst = [sub(x) for x in input_lst]
-    output_lst = [AlgReconstruction()(input_lst[k], x) for k, x in enumerate(output_lst)]
+    if use_conservation:
+        output_lst = [AlgReconstruction()(input_lst[k], x) for k, x in enumerate(output_lst)]
     output_lst = D4AntiSymmetry()(output_lst)
 
     the_output = layers.Average()(output_lst)
@@ -109,13 +117,15 @@ def create_model(
     ll_activation: str = "linear",
     bias: bool = False,
     steps_per_execution: int = 1,
+    use_conservation: bool = True,
 ) -> keras.Model:
     """D4-equivariant network with a plain feed-forward inner sub-network.
 
     Architecture:
       1. Lift input to all 8 D4-transformed copies (D4Symmetry).
       2. Pass each copy through the same shared-weight sequential sub-network.
-      3. Enforce conservation laws (AlgReconstruction) on each branch output.
+      3. Enforce conservation laws (AlgReconstruction) on each branch output
+         (skipped when use_conservation=False, e.g. for softmax last layer).
       4. Undo each transform (D4AntiSymmetry) then average.
     """
     return _wrap_d4(
@@ -129,6 +139,7 @@ def create_model(
         ll_activation,
         bias,
         steps_per_execution,
+        use_conservation,
     )
 
 
@@ -142,6 +153,7 @@ def create_resnet_model(
     ll_activation: str = "linear",
     bias: bool = False,
     steps_per_execution: int = 1,
+    use_conservation: bool = True,
 ) -> keras.Model:
     """D4-equivariant network with a residual inner sub-network.
 
@@ -159,6 +171,7 @@ def create_resnet_model(
         ll_activation,
         bias,
         steps_per_execution,
+        use_conservation,
     )
 
 
@@ -309,21 +322,27 @@ def create_lenn_model(
     ll_activation: str = "linear",
     use_bias: bool = True,
     steps_per_execution: int = 1,
+    use_conservation: bool = True,
     **_kwargs,
 ) -> keras.Model:
     """Lattice-equivariant neural network (LENN) collision operator surrogate.
 
     Architecture:
       f_pre → reshape (Q,1) → LENN hidden layers → LENN output layer (1 ch)
-            → reshape (Q,) → ll_activation → AlgReconstruction → f_post
+            → reshape (Q,) → ll_activation → [SymmetricAlgReconstruction] → f_post
 
     Each LENNLayer is equivariant under D4 by construction — no group averaging
-    needed, so inference cost is the same as a plain MLP.  AlgReconstruction
-    enforces mass and momentum conservation algebraically.
+    needed, so inference cost is the same as a plain MLP.  SymmetricAlgReconstruction
+    enforces mass and momentum conservation algebraically when use_conservation=True.
+
+    When use_conservation=False (e.g. softmax last layer), the reconstruction is
+    skipped — softmax guarantees positivity and the normalize/denormalize trick
+    handles mass conservation.
 
     Args:
         channels: C_out for each hidden LENN layer (default matches paper Table 1).
         use_bias: whether to include learnable bias in each LENN layer.
+        use_conservation: whether to apply SymmetricAlgReconstruction after the output.
         **_kwargs: silently absorbs unused MLP-style kwargs (n_hidden_layers, etc.)
     """
     inp = keras.Input(shape=(Q,))
@@ -335,7 +354,7 @@ def create_lenn_model(
     x = keras.layers.Reshape((Q,))(x)  # (batch, Q)
     x = keras.layers.Activation(ll_activation)(x)
 
-    out = SymmetricAlgReconstruction()(inp, x)
+    out = SymmetricAlgReconstruction()(inp, x) if use_conservation else x
 
     model = keras.Model(inputs=inp, outputs=out)
     model.compile(loss=loss, optimizer=optimizer, jit_compile=cast(str, True), steps_per_execution=steps_per_execution)
@@ -356,6 +375,7 @@ def create_lenn_resnet_model(
     ll_activation: str = "linear",
     use_bias: bool = True,
     steps_per_execution: int = 1,
+    use_conservation: bool = True,
     **_kwargs,
 ) -> keras.Model:
     """LENN with residual blocks (LENN+ResNet) collision operator surrogate.
@@ -363,7 +383,7 @@ def create_lenn_resnet_model(
     Architecture:
       f_pre -> reshape (Q,1) -> entry LENNLayer -> residual blocks
             -> exit LENNLayer (1 ch) -> reshape (Q,) -> ll_activation
-            -> AlgReconstruction -> f_post
+            -> [SymmetricAlgReconstruction] -> f_post
 
     Each residual block follows the two-layer pattern:
         x_new = LENNLayer_linear(LENNLayer_activate(x)) + x
@@ -374,6 +394,7 @@ def create_lenn_resnet_model(
         channels: hidden channel count for each residual block.  All equal
                   gives a pure ResNet; varying counts add projection shortcuts.
         use_bias: whether to include learnable bias in each LENN layer.
+        use_conservation: whether to apply SymmetricAlgReconstruction after the output.
         **_kwargs: silently absorbs unused MLP-style kwargs (n_hidden_layers, etc.)
     """
     inp = keras.Input(shape=(Q,))
@@ -399,7 +420,7 @@ def create_lenn_resnet_model(
     x = keras.layers.Reshape((Q,))(x)  # (batch, Q)
     x = keras.layers.Activation(ll_activation)(x)
 
-    out = SymmetricAlgReconstruction()(inp, x)
+    out = SymmetricAlgReconstruction()(inp, x) if use_conservation else x
 
     model = keras.Model(inputs=inp, outputs=out)
     model.compile(loss=loss, optimizer=optimizer, jit_compile=cast(str, True), steps_per_execution=steps_per_execution)
@@ -407,6 +428,7 @@ def create_lenn_resnet_model(
 
 
 MODEL_REGISTRY: dict[str, Callable[..., keras.Model]] = {
+    # Conservation-enforced variants (AlgReconstruction / SymmetricAlgReconstruction)
     "d4equivariant": create_model,
     "d4equivariant_10K_wide": partial(create_model, n_per_layer=69),
     "resnet": create_resnet_model,
@@ -417,4 +439,26 @@ MODEL_REGISTRY: dict[str, Callable[..., keras.Model]] = {
     "lenn_18_18_18": partial(create_lenn_model, channels=(18, 18, 18), use_bias=True),
     "lenn_resnet": partial(create_lenn_resnet_model, channels=(8, 8, 8), use_bias=True),
     "lenn_resnet_11_11_11": partial(create_lenn_resnet_model, channels=(11, 11, 11), use_bias=True),
+    "lenn_resnet_18_18_18": partial(create_lenn_resnet_model, channels=(18, 18, 18), use_bias=True),
+    # Softmax output variants (positivity guaranteed, no algebraic reconstruction)
+    # Softmax ensures f_i > 0 and sum(f_i) = 1; AlgReconstruction is omitted because
+    # it would break positivity (paper Sec. 3.1, property P4).
+    "d4equivariant_softmax": partial(create_model, ll_activation="softmax", use_conservation=False),
+    "d4equivariant_10K_wide_softmax": partial(
+        create_model, n_per_layer=69, ll_activation="softmax", use_conservation=False
+    ),
+    "resnet_softmax": partial(create_resnet_model, ll_activation="softmax", use_conservation=False),
+    "plain_2_softmax": partial(create_plain_model, depth=2, ll_activation="softmax"),
+    "lenn_softmax": partial(
+        create_lenn_model, channels=(1, 8, 8, 10), use_bias=True, ll_activation="softmax", use_conservation=False
+    ),
+    "lenn_18_18_18_softmax": partial(
+        create_lenn_model, channels=(18, 18, 18), use_bias=True, ll_activation="softmax", use_conservation=False
+    ),
+    "lenn_resnet_softmax": partial(
+        create_lenn_resnet_model, channels=(8, 8, 8), use_bias=True, ll_activation="softmax", use_conservation=False
+    ),
+    "lenn_resnet_18_18_18_softmax": partial(
+        create_lenn_resnet_model, channels=(18, 18, 18), use_bias=True, ll_activation="softmax", use_conservation=False
+    ),
 }
