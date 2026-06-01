@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from enum import Enum
 from functools import partial
 from typing import cast
 import keras
@@ -13,9 +14,24 @@ from lbm_ml.lattice.symmetry import (
     AlgReconstruction,
     SymmetricAlgReconstruction,
     PositivitySafeAlgReconstruction,
+    MultiplicativeAlgReconstruction,
     compute_d2q9_orbit_indices,
     compute_d2q9_bias_orbit_indices,
 )
+
+
+class Reconstruction(str, Enum):
+    """Conservation reconstruction layer applied after the NN output.
+
+    Pass None to any factory to skip reconstruction entirely (use with a
+    softmax last layer — the normalize/denormalize trick conserves mass and
+    softmax guarantees positivity).
+    """
+
+    ALG = "alg"                        # AlgReconstruction — fixes indices 2,5,8 (legacy, breaks D4 equivariance)
+    SYMMETRIC = "symmetric"            # SymmetricAlgReconstruction — D4-equivariant minimum-norm correction
+    POSITIVITY_SAFE = "positivity_safe"  # PositivitySafeAlgReconstruction — scales correction to keep f_i ≥ 0
+    MULTIPLICATIVE = "multiplicative"  # MultiplicativeAlgReconstruction — multiplicative, anchored to fpred
 
 # ---------------------------------------------------------------------------
 # Inner sub-networks
@@ -72,6 +88,21 @@ def resnet_sequential_model(
 # ---------------------------------------------------------------------------
 
 
+def _pick_recon(reconstruction: Reconstruction | None) -> keras.layers.Layer | None:
+    """Instantiate the requested reconstruction layer, or None to skip."""
+    match reconstruction:
+        case None:
+            return None
+        case Reconstruction.MULTIPLICATIVE:
+            return MultiplicativeAlgReconstruction()
+        case Reconstruction.POSITIVITY_SAFE:
+            return PositivitySafeAlgReconstruction()
+        case Reconstruction.ALG:
+            return AlgReconstruction()
+        case _:
+            return SymmetricAlgReconstruction()
+
+
 def _wrap_d4(
     sub_model_fn,
     loss,
@@ -83,15 +114,12 @@ def _wrap_d4(
     ll_activation,
     bias,
     steps_per_execution: int = 1,
-    use_conservation: bool = True,
-    positivity_safe: bool = False,
+    reconstruction: Reconstruction | None = Reconstruction.ALG,
 ) -> keras.Model:
     """Wrap any inner sub-network factory in the D4-equivariant lift/pool pattern.
 
-    use_conservation=False  : skip reconstruction entirely (use with softmax).
-    positivity_safe=True    : use PositivitySafeAlgReconstruction instead of
-                              AlgReconstruction — scales the conservation correction
-                              back to the largest α that keeps all f_i ≥ 0.
+    reconstruction=None skips conservation enforcement entirely (use with softmax).
+    See Reconstruction enum for available options.
     """
     the_input = keras.Input(shape=(Q,))
 
@@ -99,8 +127,8 @@ def _wrap_d4(
 
     input_lst = D4Symmetry()(the_input)
     output_lst = [sub(x) for x in input_lst]
-    if use_conservation:
-        recon = PositivitySafeAlgReconstruction() if positivity_safe else AlgReconstruction()
+    recon = _pick_recon(reconstruction)
+    if recon is not None:
         output_lst = [recon(input_lst[k], x) for k, x in enumerate(output_lst)]
     output_lst = D4AntiSymmetry()(output_lst)
 
@@ -120,17 +148,14 @@ def create_model(
     ll_activation: str = "linear",
     bias: bool = False,
     steps_per_execution: int = 1,
-    use_conservation: bool = True,
-    positivity_safe: bool = False,
+    reconstruction: Reconstruction | None = Reconstruction.ALG,
 ) -> keras.Model:
     """D4-equivariant network with a plain feed-forward inner sub-network.
 
     Architecture:
       1. Lift input to all 8 D4-transformed copies (D4Symmetry).
       2. Pass each copy through the same shared-weight sequential sub-network.
-      3. Enforce conservation laws on each branch output (skipped when
-         use_conservation=False). Use positivity_safe=True to scale back
-         the correction rather than risk negative populations.
+      3. Apply reconstruction layer (see Reconstruction enum); None skips it.
       4. Undo each transform (D4AntiSymmetry) then average.
     """
     return _wrap_d4(
@@ -144,8 +169,7 @@ def create_model(
         ll_activation,
         bias,
         steps_per_execution,
-        use_conservation,
-        positivity_safe,
+        reconstruction,
     )
 
 
@@ -159,8 +183,7 @@ def create_resnet_model(
     ll_activation: str = "linear",
     bias: bool = False,
     steps_per_execution: int = 1,
-    use_conservation: bool = True,
-    positivity_safe: bool = False,
+    reconstruction: Reconstruction | None = Reconstruction.ALG,
 ) -> keras.Model:
     """D4-equivariant network with a residual inner sub-network.
 
@@ -178,8 +201,7 @@ def create_resnet_model(
         ll_activation,
         bias,
         steps_per_execution,
-        use_conservation,
-        positivity_safe,
+        reconstruction,
     )
 
 
@@ -218,8 +240,7 @@ def create_plain_model(
     ll_activation: str = "linear",
     bias: bool = False,
     steps_per_execution: int = 1,
-    use_conservation: bool = True,
-    positivity_safe: bool = False,
+    reconstruction: Reconstruction | None = None,
     **_kwargs,
 ) -> keras.Model:
     """Plain network with NO physics constraints (no D4 GAVG, no conservation reconstruction).
@@ -229,8 +250,7 @@ def create_plain_model(
     ReLU layers are degree-1 homogeneous, so scale equivariance (P1) is the only
     physics property satisfied; D8 symmetry (P2) and conservation (P3) are not.
 
-    use_conservation and positivity_safe are accepted but ignored — the plain model
-    has no reconstruction layer.
+    reconstruction is accepted but ignored — the plain model has no reconstruction layer.
     """
     model = plain_sequential(Q, depth, n_per_layer, activation, ll_activation, bias)
     model.compile(loss=loss, optimizer=optimizer, steps_per_execution=steps_per_execution)
@@ -336,8 +356,7 @@ def create_lenn_model(
     ll_activation: str = "linear",
     use_bias: bool = True,
     steps_per_execution: int = 1,
-    use_conservation: bool = True,
-    positivity_safe: bool = False,
+    reconstruction: Reconstruction | None = Reconstruction.SYMMETRIC,
     **_kwargs,
 ) -> keras.Model:
     """Lattice-equivariant neural network (LENN) collision operator surrogate.
@@ -346,17 +365,13 @@ def create_lenn_model(
       f_pre → reshape (Q,1) → LENN hidden layers → LENN output layer (1 ch)
             → reshape (Q,) → ll_activation → [reconstruction layer] → f_post
 
-    Reconstruction layer is selected by use_conservation and positivity_safe:
-      use_conservation=False  : no reconstruction (use with softmax for positivity).
-      use_conservation=True, positivity_safe=False : SymmetricAlgReconstruction.
-      use_conservation=True, positivity_safe=True  : PositivitySafeAlgReconstruction.
+    reconstruction=None skips conservation enforcement (use with softmax).
+    See Reconstruction enum for available options.
 
     Args:
         channels: C_out for each hidden LENN layer (default matches paper Table 1).
         use_bias: whether to include learnable bias in each LENN layer.
-        use_conservation: whether to apply a conservation reconstruction layer.
-        positivity_safe: scale the correction to keep all f_i >= 0 (requires
-            use_conservation=True).
+        reconstruction: conservation layer to apply after the NN output.
         **_kwargs: silently absorbs unused MLP-style kwargs (n_hidden_layers, etc.)
     """
     inp = keras.Input(shape=(Q,))
@@ -368,11 +383,8 @@ def create_lenn_model(
     x = keras.layers.Reshape((Q,))(x)  # (batch, Q)
     x = keras.layers.Activation(ll_activation)(x)
 
-    if use_conservation:
-        recon = PositivitySafeAlgReconstruction() if positivity_safe else SymmetricAlgReconstruction()
-        out = recon(inp, x)
-    else:
-        out = x
+    recon = _pick_recon(reconstruction)
+    out = recon(inp, x) if recon is not None else x
 
     model = keras.Model(inputs=inp, outputs=out)
     model.compile(loss=loss, optimizer=optimizer, jit_compile=cast(str, True), steps_per_execution=steps_per_execution)
@@ -393,8 +405,7 @@ def create_lenn_resnet_model(
     ll_activation: str = "linear",
     use_bias: bool = True,
     steps_per_execution: int = 1,
-    use_conservation: bool = True,
-    positivity_safe: bool = False,
+    reconstruction: Reconstruction | None = Reconstruction.SYMMETRIC,
     **_kwargs,
 ) -> keras.Model:
     """LENN with residual blocks (LENN+ResNet) collision operator surrogate.
@@ -413,9 +424,7 @@ def create_lenn_resnet_model(
         channels: hidden channel count for each residual block.  All equal
                   gives a pure ResNet; varying counts add projection shortcuts.
         use_bias: whether to include learnable bias in each LENN layer.
-        use_conservation: whether to apply a conservation reconstruction layer.
-        positivity_safe: scale the correction to keep all f_i >= 0 (requires
-            use_conservation=True).
+        reconstruction: conservation layer to apply after the NN output.
         **_kwargs: silently absorbs unused MLP-style kwargs (n_hidden_layers, etc.)
     """
     inp = keras.Input(shape=(Q,))
@@ -441,11 +450,8 @@ def create_lenn_resnet_model(
     x = keras.layers.Reshape((Q,))(x)  # (batch, Q)
     x = keras.layers.Activation(ll_activation)(x)
 
-    if use_conservation:
-        recon = PositivitySafeAlgReconstruction() if positivity_safe else SymmetricAlgReconstruction()
-        out = recon(inp, x)
-    else:
-        out = x
+    recon = _pick_recon(reconstruction)
+    out = recon(inp, x) if recon is not None else x
 
     model = keras.Model(inputs=inp, outputs=out)
     model.compile(loss=loss, optimizer=optimizer, jit_compile=cast(str, True), steps_per_execution=steps_per_execution)
@@ -462,70 +468,49 @@ MODEL_REGISTRY: dict[str, Callable[..., keras.Model]] = {
     "plain_20": partial(create_plain_model, depth=20),
     "lenn": partial(create_lenn_model, channels=(1, 8, 8, 10), use_bias=True),
     "lenn_18_18_18": partial(create_lenn_model, channels=(18, 18, 18), use_bias=True),
+    "lenn_18_18_18_safe": partial(
+        create_lenn_model, channels=(18, 18, 18), use_bias=True, reconstruction=Reconstruction.POSITIVITY_SAFE
+    ),
     "lenn_resnet": partial(create_lenn_resnet_model, channels=(8, 8, 8), use_bias=True),
     "lenn_resnet_11_11_11": partial(create_lenn_resnet_model, channels=(11, 11, 11), use_bias=True),
     "lenn_resnet_18_18_18": partial(create_lenn_resnet_model, channels=(18, 18, 18), use_bias=True),
-    # Softmax only — positivity guaranteed, no conservation reconstruction (use_conservation=False).
-    # Softmax ensures f_i > 0 and sum(f_i) = 1; AlgReconstruction is omitted because
-    # it would break positivity (paper Sec. 3.1, property P4).
-    "d4equivariant_softmax": partial(create_model, ll_activation="softmax", use_conservation=False),
-    "d4equivariant_10K_wide_softmax": partial(
-        create_model, n_per_layer=69, ll_activation="softmax", use_conservation=False
+    "lenn_resnet_18_18_18_safe": partial(
+        create_lenn_resnet_model, channels=(18, 18, 18), use_bias=True, reconstruction=Reconstruction.POSITIVITY_SAFE
     ),
-    "resnet_softmax": partial(create_resnet_model, ll_activation="softmax", use_conservation=False),
+    # Softmax only — reconstruction=None, positivity via softmax + normalize/denormalize trick.
+    "d4equivariant_softmax": partial(create_model, ll_activation="softmax", reconstruction=None),
+    "d4equivariant_10K_wide_softmax": partial(create_model, n_per_layer=69, ll_activation="softmax", reconstruction=None),
+    "resnet_softmax": partial(create_resnet_model, ll_activation="softmax", reconstruction=None),
     "plain_2_softmax": partial(create_plain_model, depth=2, ll_activation="softmax"),
-    "lenn_softmax": partial(
-        create_lenn_model, channels=(1, 8, 8, 10), use_bias=True, ll_activation="softmax", use_conservation=False
-    ),
-    "lenn_18_18_18_softmax": partial(
-        create_lenn_model, channels=(18, 18, 18), use_bias=True, ll_activation="softmax", use_conservation=False
-    ),
-    "lenn_resnet_softmax": partial(
-        create_lenn_resnet_model, channels=(8, 8, 8), use_bias=True, ll_activation="softmax", use_conservation=False
-    ),
-    "lenn_resnet_18_18_18_softmax": partial(
-        create_lenn_resnet_model, channels=(18, 18, 18), use_bias=True, ll_activation="softmax", use_conservation=False
-    ),
-    # Softmax + conservation (paper's approach, Sec. 3.1).
-    # Softmax output fed into SymmetricAlgReconstruction. In practice the momentum
-    # correction is small (softmax already conserves mass), so positivity is rarely
-    # violated — but not guaranteed in theory.
-    "d4equivariant_softmax_cons": partial(create_model, ll_activation="softmax"),
-    "d4equivariant_10K_wide_softmax_cons": partial(create_model, n_per_layer=69, ll_activation="softmax"),
-    "resnet_softmax_cons": partial(create_resnet_model, ll_activation="softmax"),
+    "lenn_softmax": partial(create_lenn_model, channels=(1, 8, 8, 10), use_bias=True, ll_activation="softmax", reconstruction=None),
+    "lenn_18_18_18_softmax": partial(create_lenn_model, channels=(18, 18, 18), use_bias=True, ll_activation="softmax", reconstruction=None),
+    "lenn_resnet_softmax": partial(create_lenn_resnet_model, channels=(8, 8, 8), use_bias=True, ll_activation="softmax", reconstruction=None),
+    "lenn_resnet_18_18_18_softmax": partial(create_lenn_resnet_model, channels=(18, 18, 18), use_bias=True, ll_activation="softmax", reconstruction=None),
+    # Softmax + SYMMETRIC reconstruction (paper's approach, Sec. 3.1).
+    "d4equivariant_softmax_cons": partial(create_model, ll_activation="softmax", reconstruction=Reconstruction.SYMMETRIC),
+    "d4equivariant_10K_wide_softmax_cons": partial(create_model, n_per_layer=69, ll_activation="softmax", reconstruction=Reconstruction.SYMMETRIC),
+    "resnet_softmax_cons": partial(create_resnet_model, ll_activation="softmax", reconstruction=Reconstruction.SYMMETRIC),
     "plain_2_softmax_cons": partial(create_plain_model, depth=2, ll_activation="softmax"),
-    "lenn_softmax_cons": partial(create_lenn_model, channels=(1, 8, 8, 10), use_bias=True, ll_activation="softmax"),
-    "lenn_18_18_18_softmax_cons": partial(
-        create_lenn_model, channels=(18, 18, 18), use_bias=True, ll_activation="softmax"
-    ),
-    "lenn_resnet_softmax_cons": partial(
-        create_lenn_resnet_model, channels=(8, 8, 8), use_bias=True, ll_activation="softmax"
-    ),
-    "lenn_resnet_18_18_18_softmax_cons": partial(
-        create_lenn_resnet_model, channels=(18, 18, 18), use_bias=True, ll_activation="softmax"
-    ),
-    # Softmax + positivity-safe conservation (Option B).
-    # PositivitySafeAlgReconstruction scales the correction back to the largest α
-    # that keeps all f_i >= 0, so positivity is guaranteed while conservation is
-    # enforced as much as possible.
-    "d4equivariant_softmax_safe": partial(
-        create_model, ll_activation="softmax", positivity_safe=True
-    ),
-    "d4equivariant_10K_wide_softmax_safe": partial(
-        create_model, n_per_layer=69, ll_activation="softmax", positivity_safe=True
-    ),
-    "resnet_softmax_safe": partial(create_resnet_model, ll_activation="softmax", positivity_safe=True),
+    "lenn_softmax_cons": partial(create_lenn_model, channels=(1, 8, 8, 10), use_bias=True, ll_activation="softmax", reconstruction=Reconstruction.SYMMETRIC),
+    "lenn_18_18_18_softmax_cons": partial(create_lenn_model, channels=(18, 18, 18), use_bias=True, ll_activation="softmax", reconstruction=Reconstruction.SYMMETRIC),
+    "lenn_resnet_softmax_cons": partial(create_lenn_resnet_model, channels=(8, 8, 8), use_bias=True, ll_activation="softmax", reconstruction=Reconstruction.SYMMETRIC),
+    "lenn_resnet_18_18_18_softmax_cons": partial(create_lenn_resnet_model, channels=(18, 18, 18), use_bias=True, ll_activation="softmax", reconstruction=Reconstruction.SYMMETRIC),
+    # Softmax + POSITIVITY_SAFE reconstruction (Option B).
+    "d4equivariant_softmax_safe": partial(create_model, ll_activation="softmax", reconstruction=Reconstruction.POSITIVITY_SAFE),
+    "d4equivariant_10K_wide_softmax_safe": partial(create_model, n_per_layer=69, ll_activation="softmax", reconstruction=Reconstruction.POSITIVITY_SAFE),
+    "resnet_softmax_safe": partial(create_resnet_model, ll_activation="softmax", reconstruction=Reconstruction.POSITIVITY_SAFE),
     "plain_2_softmax_safe": partial(create_plain_model, depth=2, ll_activation="softmax"),
-    "lenn_softmax_safe": partial(
-        create_lenn_model, channels=(1, 8, 8, 10), use_bias=True, ll_activation="softmax", positivity_safe=True
-    ),
-    "lenn_18_18_18_softmax_safe": partial(
-        create_lenn_model, channels=(18, 18, 18), use_bias=True, ll_activation="softmax", positivity_safe=True
-    ),
-    "lenn_resnet_softmax_safe": partial(
-        create_lenn_resnet_model, channels=(8, 8, 8), use_bias=True, ll_activation="softmax", positivity_safe=True
-    ),
-    "lenn_resnet_18_18_18_softmax_safe": partial(
-        create_lenn_resnet_model, channels=(18, 18, 18), use_bias=True, ll_activation="softmax", positivity_safe=True
-    ),
+    "lenn_softmax_safe": partial(create_lenn_model, channels=(1, 8, 8, 10), use_bias=True, ll_activation="softmax", reconstruction=Reconstruction.POSITIVITY_SAFE),
+    "lenn_18_18_18_softmax_safe": partial(create_lenn_model, channels=(18, 18, 18), use_bias=True, ll_activation="softmax", reconstruction=Reconstruction.POSITIVITY_SAFE),
+    "lenn_resnet_softmax_safe": partial(create_lenn_resnet_model, channels=(8, 8, 8), use_bias=True, ll_activation="softmax", reconstruction=Reconstruction.POSITIVITY_SAFE),
+    "lenn_resnet_18_18_18_softmax_safe": partial(create_lenn_resnet_model, channels=(18, 18, 18), use_bias=True, ll_activation="softmax", reconstruction=Reconstruction.POSITIVITY_SAFE),
+    # Softmax + MULTIPLICATIVE reconstruction (Option C).
+    "d4equivariant_softmax_multcons": partial(create_model, ll_activation="softmax", reconstruction=Reconstruction.MULTIPLICATIVE),
+    "d4equivariant_10K_wide_softmax_multcons": partial(create_model, n_per_layer=69, ll_activation="softmax", reconstruction=Reconstruction.MULTIPLICATIVE),
+    "resnet_softmax_multcons": partial(create_resnet_model, ll_activation="softmax", reconstruction=Reconstruction.MULTIPLICATIVE),
+    "plain_2_softmax_multcons": partial(create_plain_model, depth=2, ll_activation="softmax"),
+    "lenn_softmax_multcons": partial(create_lenn_model, channels=(1, 8, 8, 10), use_bias=True, ll_activation="softmax", reconstruction=Reconstruction.MULTIPLICATIVE),
+    "lenn_18_18_18_softmax_multcons": partial(create_lenn_model, channels=(18, 18, 18), use_bias=True, ll_activation="softmax", reconstruction=Reconstruction.MULTIPLICATIVE),
+    "lenn_resnet_softmax_multcons": partial(create_lenn_resnet_model, channels=(8, 8, 8), use_bias=True, ll_activation="softmax", reconstruction=Reconstruction.MULTIPLICATIVE),
+    "lenn_resnet_18_18_18_softmax_multcons": partial(create_lenn_resnet_model, channels=(18, 18, 18), use_bias=True, ll_activation="softmax", reconstruction=Reconstruction.MULTIPLICATIVE),
 }
