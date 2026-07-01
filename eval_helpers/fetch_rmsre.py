@@ -45,7 +45,6 @@ def _sci_fmt(mean: float, stderr: float) -> str:
     return f"({mean / scale:.4f} ± {stderr / scale:.4f}) × 10^{exp}"
 
 
-
 def _resolve_models(inputs: list[str]) -> list[tuple[str, Path]]:
     """Return (title, path) pairs from a mix of model files and search folders."""
     entries: list[tuple[str, Path]] = []
@@ -84,7 +83,7 @@ def _eval_model(
     model: keras.Model = keras.models.load_model(
         str(model_path), custom_objects={"rmsre": rmsre}
     )  # pyright: ignore[reportAssignmentType]
-    fpred = model.predict(fpre, verbose=0)  # pyright: ignore[reportArgumentType]
+    fpred = model.predict(fpre, verbose=0, batch_size=512)  # pyright: ignore[reportArgumentType]
     per_sample: np.ndarray = rmsre(
         fpost, fpred
     ).numpy()  # pyright: ignore[reportAttributeAccessIssue,reportAssignmentType]
