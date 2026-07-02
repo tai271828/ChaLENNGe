@@ -18,3 +18,5 @@ __pycache__/
 artifacts-run-all-tensorflow/
 jobs/logs/
 output/
+
+context-private/
