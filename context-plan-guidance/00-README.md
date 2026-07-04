@@ -13,6 +13,7 @@ do not start coding before you can restate the acceptance criteria.
 | `02-resnet-karman-vv-plan.md` | Hypothesis H1: controlled ResNet-vs-plain experiment on the Kármán vortex street. Includes the one new code change needed (wake metrics). | **high** |
 | `03-bedrunka-nco-adoption.md` | Borrow Bedrunka-2025 ideas (bounded relaxation head, a-posteriori loss). Staged; do not start before 02 is done. | medium |
 | `04-verification-checklist.md` | Repo-wide V&V protocol to run before/after any model or physics change | high (recurring) |
+| `05-design-rationale.md` | Meta: the principles behind these docs — read before adding a new doc here | when extending |
 
 ## Repo conventions (from `CLAUDE.md` — binding)
 
