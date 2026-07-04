@@ -184,6 +184,8 @@ def write_manifest(args, Nx: int, Ny: int, tau: float, nu: float) -> None:
         },
         "run": {
             "anim_steps": args.anim_steps,
+            "snap_every": args.snap_every,
+            "snap_after": args.snap_after,
             "update_steps": args.update_steps,
             "batch_size": args.batch_size,
             "warmup_frac": args.warmup_frac,
@@ -389,7 +391,7 @@ def make_animation(model, args) -> None:
             frames_uy.append(uy.copy())
             frame_steps.append(step)
             print(f"  Frame saved at step {step}/{n_steps}")
-        if snap_every > 0 and step % snap_every == 0:
+        if snap_every > 0 and step >= args.snap_after and step % snap_every == 0:
             save_snapshot(step, ux, uy)
 
     # -- Wake metrics: per-step CSV + Strouhal / stability summary --
@@ -636,6 +638,12 @@ def parse_args():
         type=int,
         default=0,
         help="Save a PNG snapshot every N steps (0 disables).",
+    )
+    p.add_argument(
+        "--snap-after",
+        type=int,
+        default=0,
+        help="Start saving PNG snapshots only from this step (skip the transient).",
     )
 
     p.add_argument(

@@ -93,6 +93,7 @@ thousand), `--update-steps` (frame cadence), `--gif-fps`, `--snap-every`,
 `--batch-size` (predict batch; 4096 is a good default), `--res/--u-inlet/--re`
 (geometry/physics), `--max-snapshots` (cap/sub-sample evaluation snapshots),
 `--bgk-only` (control run), `--probe-x/--probe-y/--warmup-frac` (wake metrics),
+`--snap-after` (save PNG snapshots only past this step — skip the transient),
 `--seed` (recorded in the manifest).
 
 ## Notes
