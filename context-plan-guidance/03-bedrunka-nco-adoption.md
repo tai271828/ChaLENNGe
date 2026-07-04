@@ -1,5 +1,20 @@
 # Work package: borrowing from Bedrunka 2025 (NCO) — staged plan
 
+> **DECISION (P3, 2026-07-05): borrow first, reproduce later-if-ever.**
+> Context: doc 01 §Fact-check — the NCO solves a different problem class, so a
+> head-to-head reproduction (Stage C) answers no near-term question, while the
+> bounded-stability idea is cheap to test. Decision: implement Stage A now;
+> Stage B after work package 02 reports; Stage C stays gated on both.
+> Consequence: Stage A is **implemented** — `BoundedBlendReconstruction` in
+> `lbm_ml/lattice/symmetry.py`, wired as `Reconstruction.BOUNDED` with six
+> `*_softmax_bounded` registry entries in `lbm_ml/model/network.py`.
+> Structural verification passed at float64 precision (equilibrium vs stencil
+> 1e-16, conservation 2e-16, D4 equivariance 6e-17, g→1 recovers the plain
+> symmetric projection, save/load round-trip exact, +3 params); a training
+> smoke test confirmed gradients reach θ. The *behavioral* acceptance below
+> (stability horizon on trained checkpoints) still requires the work-package-02
+> training runs.
+
 Prerequisite reading: `01-paper-comparison-and-factcheck.md` §Fact-check.
 Bedrunka's Neural Collision Operator (NCO) is **not** a drop-in replacement for
 this repo's collision surrogates — it learns MRT relaxation rates, not the
@@ -25,8 +40,11 @@ f_out = f_eq(ρ, u of f_pre) + g(x) ⊙ (f_nn − f_eq)
 with `g = 0.5 + 0.5·sigmoid(·)` either a learned scalar/per-orbit parameter or
 a fixed hyperparameter. `g ∈ (0.5, 1]` mirrors the NCO bound: `g=1` returns the
 raw NN prediction, `g→0.5` damps non-equilibrium content (over-relaxation
-regime). Conservation is preserved automatically because `f_eq` carries the
-exact (ρ, u) of the input and the blend only scales the non-equilibrium part.
+regime). The blend alone conserves mass/momentum only to the extent `f_nn`
+does, so the implementation composes it with the minimum-norm symmetric
+projection (subclassing `SymmetricAlgReconstruction`), making conservation
+exact regardless of `g` — the NCO analogy holds fully: conserved moments
+untouched, non-equilibrium content bounded.
 
 Implementation notes:
 - New layer in `lbm_ml/lattice/symmetry.py` next to the existing

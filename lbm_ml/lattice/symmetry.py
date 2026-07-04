@@ -77,7 +77,11 @@ def LBrot90(f, k=1):
     # Index 0 (rest) is unchanged.
     # Indices 1–4 (axis-aligned) and 5–8 (diagonal) each cycle as a group.
     return keras.ops.concatenate(
-        [f[:, 0, None], keras.ops.roll(f[:, 1:5], k, axis=-1), keras.ops.roll(f[:, 5:], k, axis=-1)],
+        [
+            f[:, 0, None],
+            keras.ops.roll(f[:, 1:5], k, axis=-1),
+            keras.ops.roll(f[:, 5:], k, axis=-1),
+        ],
         axis=-1,
     )
 
@@ -214,7 +218,14 @@ class AlgReconstruction(keras.layers.Layer):
         # and velocity vectors into the three conservation equations and solving
         # for df[2], df[5], df[8] given the other six df values.
         df2 = -(df[:, 0] + 2 * df[:, 3] + df[:, 4] + 2 * df[:, 6] + 2 * df[:, 7])
-        df5 = 0.5 * (df[:, 0] + 3 * df[:, 3] + 2 * df[:, 4] + 2 * df[:, 6] + 4 * df[:, 7] - df[:, 1])
+        df5 = 0.5 * (
+            df[:, 0]
+            + 3 * df[:, 3]
+            + 2 * df[:, 4]
+            + 2 * df[:, 6]
+            + 4 * df[:, 7]
+            - df[:, 1]
+        )
         df8 = -0.5 * (df[:, 0] + df[:, 1] + df[:, 3] + 2 * df[:, 4] + 2 * df[:, 7])
 
         # Reassemble the full correction vector with the reconstructed directions
@@ -316,7 +327,9 @@ class PositivitySafeAlgReconstruction(SymmetricAlgReconstruction):
     def _apply(self, fpre, df_corrected):
         eps = keras.ops.cast(self.epsilon, df_corrected.dtype)
         # α_i = (fpre[i] - ε) / (-df_corrected[i]) for directions where correction < 0
-        safe_denom = keras.ops.where(df_corrected < 0, -df_corrected, keras.ops.ones_like(df_corrected))
+        safe_denom = keras.ops.where(
+            df_corrected < 0, -df_corrected, keras.ops.ones_like(df_corrected)
+        )
         alpha_i = keras.ops.where(
             df_corrected < 0,
             (fpre - eps) / safe_denom,
@@ -328,6 +341,81 @@ class PositivitySafeAlgReconstruction(SymmetricAlgReconstruction):
     def get_config(self):
         config = super().get_config()
         config.update({"epsilon": self.epsilon})
+        return config
+
+
+@keras.saving.register_keras_serializable(package="lbm")
+class BoundedBlendReconstruction(SymmetricAlgReconstruction):
+    """NCO-style bounded blend toward equilibrium, then exact conservation.
+
+    2D analogue of the stability bound of Bedrunka et al. 2025 (PRE 112,
+    055308, Eq. 18), where learned MRT relaxation rates are sigmoid-squashed
+    into (0.5, 1.0] so the operator can never under-relax.  Here the same
+    bound acts on the non-equilibrium part of the NN prediction:
+
+        f_eq    = equilibrium(rho, u of fpre)          # second-order D2Q9
+        g       = 0.5 + 0.5 * sigmoid(theta)           # in (0.5, 1), learned
+        blended = f_eq + g * (fpred - f_eq)
+        f_post  = conservation projection of blended   # parent class
+
+    g -> 1 returns the raw NN prediction; g -> 0.5 damps non-equilibrium
+    content toward the over-relaxation regime, mirroring the NCO's tau bound.
+    theta has one free scalar per D4 population orbit (rest / axis-aligned /
+    diagonal), so the blend commutes with every D4 transform; the final
+    minimum-norm projection (inherited call chain) restores the exact mass
+    and momentum of fpre regardless of g.
+
+    Parameters
+    ----------
+    theta_init : float
+        Initial value of the three orbit logits (0.0 -> g = 0.75).
+    """
+
+    # D2Q9 quadrature weights in stencil order [rest, E, N, W, S, NE, NW, SW, SE].
+    # Kept as a float64 numpy array: keras.ops.cast on a Python list would round
+    # through float32 first, costing ~1e-9 absolute error in the equilibrium.
+    _W = np.array(
+        [4 / 9, 1 / 9, 1 / 9, 1 / 9, 1 / 9, 1 / 36, 1 / 36, 1 / 36, 1 / 36],
+        dtype="float64",
+    )
+
+    def __init__(self, theta_init: float = 0.0, **kwargs):
+        super().__init__(**kwargs)
+        self.theta_init = theta_init
+
+    def build(self, input_shape):
+        self._g_idx = compute_d2q9_bias_orbit_indices().astype("int32")  # (9,)
+        self.theta = self.add_weight(
+            name="theta",
+            shape=(3,),  # one logit per population orbit
+            initializer=keras.initializers.Constant(self.theta_init),
+        )
+        super().build(input_shape)
+
+    def _equilibrium(self, f):
+        """Second-order D2Q9 equilibrium from the (rho, u) moments of f."""
+        cx = keras.ops.cast(self._CX, f.dtype)
+        cy = keras.ops.cast(self._CY, f.dtype)
+        w = keras.ops.cast(self._W, f.dtype)
+        rho = keras.ops.sum(f, axis=-1, keepdims=True)
+        ux = keras.ops.sum(f * cx, axis=-1, keepdims=True) / rho
+        uy = keras.ops.sum(f * cy, axis=-1, keepdims=True) / rho
+        cu = cx * ux + cy * uy  # (batch, 9)
+        usq = ux**2 + uy**2  # (batch, 1)
+        # cs2 = 1/3: 1 + cu/cs2 + cu^2/(2 cs2^2) - u^2/(2 cs2)
+        return w * rho * (1.0 + 3.0 * cu + 4.5 * cu**2 - 1.5 * usq)
+
+    def call(self, fpre, fpred):
+        feq = self._equilibrium(fpre)
+        g_orbit = 0.5 + 0.5 * keras.ops.sigmoid(keras.ops.cast(self.theta, fpred.dtype))
+        g = keras.ops.take(g_orbit, self._g_idx, axis=0)  # (9,)
+        blended = feq + g * (fpred - feq)
+        # Parent projection restores the exact mass/momentum of fpre.
+        return super().call(fpre, blended)
+
+    def get_config(self):
+        config = super().get_config()
+        config.update({"theta_init": self.theta_init})
         return config
 
 
@@ -368,7 +456,9 @@ class MultiplicativeAlgReconstruction(PositivitySafeAlgReconstruction):
 
         # Analytic 2×2 inverse; guard against near-singular (e.g. uniform flow)
         det = A00 * A11 - A01 * A01
-        det_safe = keras.ops.where(keras.ops.abs(det) > 1e-12, det, keras.ops.ones_like(det))
+        det_safe = keras.ops.where(
+            keras.ops.abs(det) > 1e-12, det, keras.ops.ones_like(det)
+        )
         lam1 = (A11 * d_px - A01 * d_py) / det_safe
         lam2 = (A00 * d_py - A01 * d_px) / det_safe
         singular = keras.ops.abs(det) <= 1e-12
