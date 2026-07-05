@@ -46,7 +46,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from lbm_ml.model.losses import rmsre
-from lbm_ml.model.network import MODEL_REGISTRY  # noqa: F401  (kept for --model discovery)
+from lbm_ml.model.network import (
+    MODEL_REGISTRY,
+)  # noqa: F401  (kept for --model discovery)
+from lbm_ml.provenance import sha256, write_manifest
 from lbm_ml.validation.free_turbulence import (
     TurbulenceConfig,
     log_derivative,
@@ -59,13 +62,21 @@ ARTIFACTS_DIR = Path(__file__).resolve().parent / "artifacts-run-all-tensorflow"
 
 
 def setup_logging(verbose: bool = True) -> None:
-    logging.basicConfig(level=logging.INFO if verbose else logging.WARNING, format="%(message)s", force=True)
+    logging.basicConfig(
+        level=logging.INFO if verbose else logging.WARNING,
+        format="%(message)s",
+        force=True,
+    )
 
 
 def _latest_run_dir(model_name: str) -> Path:
-    matches = sorted(ARTIFACTS_DIR.glob(f"{model_name}_*"), key=lambda p: p.stat().st_mtime)
+    matches = sorted(
+        ARTIFACTS_DIR.glob(f"{model_name}_*"), key=lambda p: p.stat().st_mtime
+    )
     if not matches:
-        raise FileNotFoundError(f"No runs found for model '{model_name}' in {ARTIFACTS_DIR}")
+        raise FileNotFoundError(
+            f"No runs found for model '{model_name}' in {ARTIFACTS_DIR}"
+        )
     return matches[-1]
 
 
@@ -79,17 +90,19 @@ def _load_model(run_dir: Path):
     return keras.models.load_model(str(model_path), custom_objects={"rmsre": rmsre})
 
 
-def _collect_models(args) -> dict[str, object]:
-    """Resolve the --model / --run flags into a {label: keras_model} mapping."""
+def _collect_models(args) -> tuple[dict[str, object], dict[str, Path]]:
+    """Resolve the --model / --run flags into {label: keras_model} + {label: model path}."""
     import keras
 
     keras.backend.set_floatx("float64")
 
     models: dict[str, object] = {}
+    paths: dict[str, Path] = {}
     if args.model:
         run_dir = Path(args.run_dir) if args.run_dir else _latest_run_dir(args.model)
         logger.info("Loading model '%s' from %s", args.model, run_dir)
         models[args.model] = _load_model(run_dir)
+        paths[args.model] = run_dir / "model.keras"
 
     for spec in args.run or []:
         # "path" or "path:label" (label must not look like a path segment).
@@ -101,8 +114,9 @@ def _collect_models(args) -> dict[str, object]:
         label = label or run_dir.name
         logger.info("Loading model '%s' from %s", label, run_dir)
         models[label] = _load_model(run_dir)
+        paths[label] = run_dir / "model.keras"
 
-    return models
+    return models, paths
 
 
 # ---------------------------------------------------------------------------
@@ -119,7 +133,9 @@ def _plot_energy_decay(results, cfg, out_path: Path) -> None:
         label = "BGK (truth)" if name == "bgk" else name
         ax.semilogy(t, r.energy, label=label, **style)
     ax.set_xlabel(r"$t~\rm{[L.U.]}$", fontsize=14)
-    ax.set_ylabel(r"$\langle E \rangle = \langle \frac{1}{2}|u|^2 \rangle$", fontsize=14)
+    ax.set_ylabel(
+        r"$\langle E \rangle = \langle \frac{1}{2}|u|^2 \rangle$", fontsize=14
+    )
     ax.set_title("Free-decay kinetic energy", fontsize=14)
     ax.legend(frameon=False)
     ax.tick_params(direction="in", top=True, right=True)
@@ -157,7 +173,11 @@ def _plot_velocity_fields(results, cfg, out_path: Path, snap_step: int) -> None:
     for ax, name in zip(axes[0], names):
         r = results[name]
         v = r.velocity[step]
-        umag = np.sqrt(v[:, :, 0] ** 2 + v[:, :, 1] ** 2) if np.all(np.isfinite(v)) else np.zeros((cfg.nx, cfg.ny))
+        umag = (
+            np.sqrt(v[:, :, 0] ** 2 + v[:, :, 1] ** 2)
+            if np.all(np.isfinite(v))
+            else np.zeros((cfg.nx, cfg.ny))
+        )
         im = ax.imshow(umag.T, origin="lower", cmap="viridis")
         title = "BGK (truth)" if name == "bgk" else name
         if r.diverged:
@@ -172,7 +192,9 @@ def _plot_velocity_fields(results, cfg, out_path: Path, snap_step: int) -> None:
     logger.info("  Velocity-field snapshot -> %s", out_path)
 
 
-def _animate_velocity_fields(results, cfg, out_path: Path, fps: int = 10, streamlines: bool = False) -> None:
+def _animate_velocity_fields(
+    results, cfg, out_path: Path, fps: int = 10, streamlines: bool = False
+) -> None:
     """Animate |u|(x, y, t) over the free-decay steps, one panel per operator.
 
     A **fixed** colour scale (shared across panels and frames) is used on
@@ -189,8 +211,13 @@ def _animate_velocity_fields(results, cfg, out_path: Path, fps: int = 10, stream
     n = len(names)
 
     # Pre-compute |u| for every operator/frame and a single global colour scale.
-    mag = {name: np.sqrt(r.velocity[..., 0] ** 2 + r.velocity[..., 1] ** 2) for name, r in results.items()}
-    finite_max = [np.nanmax(m[np.isfinite(m)]) for m in mag.values() if np.any(np.isfinite(m))]
+    mag = {
+        name: np.sqrt(r.velocity[..., 0] ** 2 + r.velocity[..., 1] ** 2)
+        for name, r in results.items()
+    }
+    finite_max = [
+        np.nanmax(m[np.isfinite(m)]) for m in mag.values() if np.any(np.isfinite(m))
+    ]
     vmax = max(finite_max) if finite_max else 1.0
     if not np.isfinite(vmax) or vmax <= 0:
         vmax = 1.0
@@ -198,7 +225,12 @@ def _animate_velocity_fields(results, cfg, out_path: Path, fps: int = 10, stream
 
     fig, axes = plt.subplots(1, n, figsize=(3.2 * n, 3.6), squeeze=False)
     axes = axes[0]
-    fig.colorbar(ScalarMappable(norm=norm, cmap="viridis"), ax=list(axes), shrink=0.8, label="|u|")
+    fig.colorbar(
+        ScalarMappable(norm=norm, cmap="viridis"),
+        ax=list(axes),
+        shrink=0.8,
+        label="|u|",
+    )
 
     X, Y = np.meshgrid(np.arange(cfg.nx), np.arange(cfg.ny))
     n_frames = cfg.n_decay + 1
@@ -211,7 +243,16 @@ def _animate_velocity_fields(results, cfg, out_path: Path, fps: int = 10, stream
             m = mag[name][t]
             ax.imshow(np.nan_to_num(m).T, origin="lower", cmap="viridis", norm=norm)
             if streamlines and finite:
-                ax.streamplot(X, Y, v[:, :, 0].T, v[:, :, 1].T, density=0.6, color="w", linewidth=0.6, arrowsize=0.6)
+                ax.streamplot(
+                    X,
+                    Y,
+                    v[:, :, 0].T,
+                    v[:, :, 1].T,
+                    density=0.6,
+                    color="w",
+                    linewidth=0.6,
+                    arrowsize=0.6,
+                )
             title = "BGK (truth)" if name == "bgk" else name
             if not finite:
                 title += " [diverged]"
@@ -249,25 +290,70 @@ def _write_summary(results, cfg, out_path: Path) -> None:
 
 
 def _parse_args():
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--model", default=None, choices=list(MODEL_REGISTRY), help="Validate the latest run of this model.")
-    p.add_argument("--run-dir", default=None, help="Explicit run dir for --model (default: latest run).")
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    p.add_argument(
+        "--model",
+        default=None,
+        choices=list(MODEL_REGISTRY),
+        help="Validate the latest run of this model.",
+    )
+    p.add_argument(
+        "--run-dir",
+        default=None,
+        help="Explicit run dir for --model (default: latest run).",
+    )
     p.add_argument(
         "--run",
         action="append",
         default=None,
         help="Add a trained model by run dir, optionally 'path:label'. Repeatable.",
     )
-    p.add_argument("--no-model", action="store_true", help="Run ground-truth BGK only (smoke test).")
+    p.add_argument(
+        "--no-model",
+        action="store_true",
+        help="Run ground-truth BGK only (smoke test).",
+    )
 
     p.add_argument("--nx", type=int, default=32)
     p.add_argument("--ny", type=int, default=32)
-    p.add_argument("--tau", type=float, default=0.51, help="Relaxation time; match the model's training tau.")
-    p.add_argument("--force-amp", type=float, default=5e-6, help="Transient force amplitude A (paper: 5e-6).")
-    p.add_argument("--force-mode", type=int, default=1, help="Forcing wavenumber mode m (k=2*pi*m/L).")
-    p.add_argument("--n-transient", type=int, default=20000, help="Forced BGK steps to develop the flow.")
-    p.add_argument("--n-decay", type=int, default=200, help="Free-decay steps to compare (paper T=200).")
-    p.add_argument("--seed-perturbation", type=float, default=1e-4, help="Amplitude of divergence-free IC kick.")
+    p.add_argument(
+        "--tau",
+        type=float,
+        default=0.51,
+        help="Relaxation time; match the model's training tau.",
+    )
+    p.add_argument(
+        "--force-amp",
+        type=float,
+        default=5e-6,
+        help="Transient force amplitude A (paper: 5e-6).",
+    )
+    p.add_argument(
+        "--force-mode",
+        type=int,
+        default=1,
+        help="Forcing wavenumber mode m (k=2*pi*m/L).",
+    )
+    p.add_argument(
+        "--n-transient",
+        type=int,
+        default=20000,
+        help="Forced BGK steps to develop the flow.",
+    )
+    p.add_argument(
+        "--n-decay",
+        type=int,
+        default=200,
+        help="Free-decay steps to compare (paper T=200).",
+    )
+    p.add_argument(
+        "--seed-perturbation",
+        type=float,
+        default=1e-4,
+        help="Amplitude of divergence-free IC kick.",
+    )
     p.add_argument("--seed", type=int, default=0)
     p.add_argument(
         "--window",
@@ -277,13 +363,32 @@ def _parse_args():
         metavar=("T0", "T1"),
         help="Step range for averaging the log decay rate (paper: 50 200).",
     )
-    p.add_argument("--snap-step", type=int, default=200, help="Decay step for the velocity-field snapshot.")
+    p.add_argument(
+        "--snap-step",
+        type=int,
+        default=200,
+        help="Decay step for the velocity-field snapshot.",
+    )
 
-    p.add_argument("--no-animate", action="store_true", help="Skip the |u|(x,y,t) decay animation (GIF).")
-    p.add_argument("--fps", type=int, default=10, help="Frames per second for the decay animation.")
-    p.add_argument("--streamlines", action="store_true", help="Overlay velocity streamlines on each animation frame.")
+    p.add_argument(
+        "--no-animate",
+        action="store_true",
+        help="Skip the |u|(x,y,t) decay animation (GIF).",
+    )
+    p.add_argument(
+        "--fps", type=int, default=10, help="Frames per second for the decay animation."
+    )
+    p.add_argument(
+        "--streamlines",
+        action="store_true",
+        help="Overlay velocity streamlines on each animation frame.",
+    )
 
-    p.add_argument("--out-dir", default=None, help="Output directory (default: timestamped under artifacts).")
+    p.add_argument(
+        "--out-dir",
+        default=None,
+        help="Output directory (default: timestamped under artifacts).",
+    )
     p.add_argument("--quiet", action="store_true")
     return p.parse_args()
 
@@ -305,9 +410,11 @@ def main() -> None:
         error_window=(int(args.window[0]), int(args.window[1])),
     )
 
-    models = {} if args.no_model else _collect_models(args)
+    models, model_paths = ({}, {}) if args.no_model else _collect_models(args)
     if not models and not args.no_model:
-        logger.warning("No models selected (use --model / --run, or --no-model). Running BGK only.")
+        logger.warning(
+            "No models selected (use --model / --run, or --no-model). Running BGK only."
+        )
 
     results = run_validation(cfg, models)
 
@@ -319,12 +426,41 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     logger.info("Output dir: %s", out_dir)
 
+    manifest_path = write_manifest(
+        out_dir,
+        {
+            "models": {
+                label: {"path": path, "sha256": sha256(path)}
+                for label, path in model_paths.items()
+            },
+            "physics": {
+                "nx": args.nx,
+                "ny": args.ny,
+                "tau": args.tau,
+                "force_amp": args.force_amp,
+                "force_mode": args.force_mode,
+            },
+            "run": {
+                "n_transient": args.n_transient,
+                "n_decay": args.n_decay,
+                "window": list(args.window),
+                "seed": args.seed,
+                "seed_perturbation": args.seed_perturbation,
+            },
+        },
+    )
+    logger.info("  Manifest -> %s", manifest_path)
+
     _plot_energy_decay(results, cfg, out_dir / "energy_decay.png")
     _plot_log_derivative(results, cfg, out_dir / "log_derivative.png")
     _plot_velocity_fields(results, cfg, out_dir / "velocity_fields.png", args.snap_step)
     if not args.no_animate:
         _animate_velocity_fields(
-            results, cfg, out_dir / "velocity_evolution.gif", fps=args.fps, streamlines=args.streamlines
+            results,
+            cfg,
+            out_dir / "velocity_evolution.gif",
+            fps=args.fps,
+            streamlines=args.streamlines,
         )
     _write_summary(results, cfg, out_dir / "summary.txt")
 

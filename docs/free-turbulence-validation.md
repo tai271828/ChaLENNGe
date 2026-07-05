@@ -88,6 +88,21 @@ containing:
 - `summary.txt` — per-operator a-posteriori error, mean log-rate, and relative
   decay-rate error vs BGK.
 - `curves.npz` — raw energy curves for later re-plotting / aggregation.
+- `manifest.json` — provenance: model paths + SHA256 per label, τ, grid,
+  forcing, decay settings, seeds, git commit, command line.
+
+## τ-consistent invocation (KVS-trained models, τ=0.5576)
+
+```bash
+python validate_free_turbulence.py \
+    --run <ckpts>/lenn_resnet_karman_every_100_...:LENN+ResNet \
+    --run <ckpts>/d4equivariant_karman_every_100_...:GAVG \
+    --tau 0.5576 --n-transient 20000 --n-decay 200 --window 50 200
+```
+
+With `tau=0.5576` and the paper's `A=5e-6` the steady transient velocity is
+`u ~ A/(ν k²) ≈ 7e-3` (Re ≈ 11); raise `--force-amp` to `5e-5` for `u ≈ 0.07`
+(Re ≈ 110, still inside the KVS training distribution, U_inlet=0.12).
 
 ### Reading the animation honestly
 
