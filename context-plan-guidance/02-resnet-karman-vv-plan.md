@@ -127,6 +127,14 @@ Metric: a-posteriori error and decay-rate error vs BGK from `summary.txt`.
 
 ## Step 4 — decision criteria
 
+> **SIGNED OFF (P6, 2026-07-05)** by the project owner, before any matrix
+> data exists (ex-ante rule, doc 05 §2.1). Two explicit choices:
+> (a) the decision rule is **KVS-only** — the free-turbulence decay test
+> (step 3) is reported as a sanity check but does not decide H1;
+> (b) criterion 3 is a **guard, not a requirement** — "precise" is judged by
+> the wake dynamics (criterion 2), and single-step RMSRE only needs to avoid
+> a >2× late-window regression. Do not amend these after results arrive.
+
 Declare H1 **supported** iff, with 3 seeds per row (report mean ± min/max):
 1. Stability horizon (resnet row) ≥ its non-resnet twin on every seed, and
 2. |St − St_BGK|/St_BGK (resnet) < non-resnet twin on ≥2/3 seeds, and
