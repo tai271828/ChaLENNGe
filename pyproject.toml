@@ -28,3 +28,7 @@ include = ["lbm_ml*"]
 
 [tool.uv]
 package = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]  # root-level driver scripts (apply_nn_karman.py) importable in tests
