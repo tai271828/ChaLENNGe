@@ -80,7 +80,10 @@ def _count_tb_epochs(tb_log_dir: Path) -> int:
 
 
 def _load_model(
-    checkpoint: Path, model_name: str | None, learning_rate: float, steps_per_execution: int = 1
+    checkpoint: Path,
+    model_name: str | None,
+    learning_rate: float,
+    steps_per_execution: int = 1,
 ) -> keras.Model:
     """Load a model from either a model.keras or a weights.keras checkpoint.
 
@@ -104,10 +107,14 @@ def _load_model(
         # does not contain "weight". The user can always be explicit.
         try:
             logger.info("Loading full model from %s ...", checkpoint)
-            model = keras.models.load_model(str(checkpoint), custom_objects={"rmsre": rmsre})
+            model = keras.models.load_model(
+                str(checkpoint), custom_objects={"rmsre": rmsre}
+            )
             logger.info("  -> Optimizer state restored (true resume).")
             if steps_per_execution > 1:
-                logger.info("  -> steps_per_execution ignored for full model resume (would reset optimizer state).")
+                logger.info(
+                    "  -> steps_per_execution ignored for full model resume (would reset optimizer state)."
+                )
             return model  # pyright: ignore[reportReturnType]
         except Exception:
             pass  # fall through to weights path
@@ -119,9 +126,13 @@ def _load_model(
             "Pass --model to specify which model to instantiate."
         )
     if model_name not in MODEL_REGISTRY:
-        raise ValueError(f"Unknown model '{model_name}'. Choose from: {list(MODEL_REGISTRY)}")
+        raise ValueError(
+            f"Unknown model '{model_name}'. Choose from: {list(MODEL_REGISTRY)}"
+        )
 
-    logger.info("Instantiating %s and loading weights from %s ...", model_name, checkpoint)
+    logger.info(
+        "Instantiating %s and loading weights from %s ...", model_name, checkpoint
+    )
     model = MODEL_REGISTRY[model_name](
         loss=rmsre,
         optimizer=keras.optimizers.Adam(learning_rate=learning_rate),
@@ -134,15 +145,22 @@ def _load_model(
 
 
 def _parse_args():
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("checkpoint", help="Path to model.keras (full resume) or weights.keras (weights only)")
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    p.add_argument(
+        "checkpoint",
+        help="Path to model.keras (full resume) or weights.keras (weights only)",
+    )
     p.add_argument(
         "--model",
         default=None,
         choices=list(MODEL_REGISTRY),
         help="Architecture to instantiate (required when checkpoint is weights.keras)",
     )
-    p.add_argument("--n-epochs", type=int, default=200, help="Number of additional epochs to train")
+    p.add_argument(
+        "--n-epochs", type=int, default=200, help="Number of additional epochs to train"
+    )
     p.add_argument(
         "--initial-epoch",
         type=int,
@@ -152,7 +170,12 @@ def _parse_args():
     )
     p.add_argument("--patience", type=int, default=50, help="EarlyStopping patience")
     p.add_argument("--batch-size", type=int, default=32, help="Training batch size")
-    p.add_argument("--learning-rate", type=float, default=1e-3, help="Adam learning rate (weights.keras only)")
+    p.add_argument(
+        "--learning-rate",
+        type=float,
+        default=1e-3,
+        help="Adam learning rate (weights.keras only)",
+    )
     p.add_argument(
         "--data-dir",
         required=True,
@@ -161,7 +184,11 @@ def _parse_args():
     p.add_argument("--samples-per-step", type=int, default=None)
     p.add_argument("--step-stride", type=int, default=1)
     p.add_argument("--max-steps", type=int, default=None)
-    p.add_argument("--run-name", default="continued", help="Label added to the new run directory name")
+    p.add_argument(
+        "--run-name",
+        default="continued",
+        help="Label added to the new run directory name",
+    )
     p.add_argument("--tensorboard", action="store_true")
     p.add_argument("--quiet", action="store_true", help="Suppress INFO logging")
     p.add_argument(
@@ -191,7 +218,9 @@ if __name__ == "__main__":
     if initial_epoch is None:
         initial_epoch = _count_tb_epochs(prev_tb_log)
         if initial_epoch > 0:
-            logger.info("Detected %d completed epochs from previous TB log.", initial_epoch)
+            logger.info(
+                "Detected %d completed epochs from previous TB log.", initial_epoch
+            )
         else:
             logger.info("Could not detect previous epoch count; starting from epoch 0.")
 
@@ -203,11 +232,19 @@ if __name__ == "__main__":
 
     if prev_tb_log.exists():
         shutil.copytree(prev_tb_log, paths["tb_log"], dirs_exist_ok=True)
-        logger.info("Copied previous TB logs -> %s (epoch offset: %d)", paths["tb_log"], initial_epoch)
+        logger.info(
+            "Copied previous TB logs -> %s (epoch offset: %d)",
+            paths["tb_log"],
+            initial_epoch,
+        )
     else:
-        logger.info("TensorBoard log: %s (epoch offset: %d)", paths["tb_log"], initial_epoch)
+        logger.info(
+            "TensorBoard log: %s (epoch offset: %d)", paths["tb_log"], initial_epoch
+        )
 
-    model = _load_model(checkpoint, args.model, args.learning_rate, args.steps_per_execution)
+    model = _load_model(
+        checkpoint, args.model, args.learning_rate, args.steps_per_execution
+    )
 
     fpre_train, fpre_test, fpost_train, fpost_test = load_training_data(
         data_dir=Path(args.data_dir),

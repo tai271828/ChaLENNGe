@@ -8,7 +8,9 @@ from lbm_ml.lattice.stencil import LB_stencil
 _c, _w, _cs2, _compute_feq = LB_stencil()
 
 
-def compute_rho_u(num_samples, rho_min=0.95, rho_max=1.05, u_abs_min=0.0, u_abs_max=0.01):
+def compute_rho_u(
+    num_samples, rho_min=0.95, rho_max=1.05, u_abs_min=0.0, u_abs_max=0.01
+):
     """Sample random macroscopic density and velocity fields."""
     rho = np.random.uniform(rho_min, rho_max, size=num_samples)
     u_abs = np.random.uniform(u_abs_min, u_abs_max, size=num_samples)
@@ -40,7 +42,12 @@ def compute_f_rand(num_samples, sigma_min, sigma_max):
         uy_hat = np.sum(f_rand[i, :] * _c[:, 1])
 
         # Project out conserved moments so f_neq has zero mass and momentum
-        f_rand[i, :] = f_rand[i, :] - K0 * rho_hat - K1 * ux_hat * _c[:, 0] - K1 * uy_hat * _c[:, 1]
+        f_rand[i, :] = (
+            f_rand[i, :]
+            - K0 * rho_hat
+            - K1 * ux_hat * _c[:, 0]
+            - K1 * uy_hat * _c[:, 1]
+        )
 
     return f_rand
 
@@ -147,7 +154,15 @@ def generate_dataset(
     Path to the saved .npz file.
     """
     f_eq, f_pre, f_post = generate_samples(
-        n_samples, rho_min, rho_max, u_abs_min, u_abs_max, sigma_min, sigma_max, tau_min, tau_max
+        n_samples,
+        rho_min,
+        rho_max,
+        u_abs_min,
+        u_abs_max,
+        sigma_min,
+        sigma_max,
+        tau_min,
+        tau_max,
     )
     np.savez(dataset_path, f_pre=f_pre, f_post=f_post, f_eq=f_eq)
     return dataset_path

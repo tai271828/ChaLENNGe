@@ -22,13 +22,20 @@ from lbm_ml import rmsre
 
 p = argparse.ArgumentParser(description="Rebuild a saved model from weights alone.")
 p.add_argument("weights_path", help="Path to weights.keras")
-p.add_argument("output_path", nargs="?", default=None, help="Path to write model.keras (default: same dir as weights)")
+p.add_argument(
+    "output_path",
+    nargs="?",
+    default=None,
+    help="Path to write model.keras (default: same dir as weights)",
+)
 p.add_argument("--model", default="lenn", choices=list(MODEL_REGISTRY))
 p.add_argument("--learning-rate", type=float, default=1e-3)
 args = p.parse_args()
 
 weights_path = Path(args.weights_path)
-output_path = Path(args.output_path) if args.output_path else weights_path.parent / "model.keras"
+output_path = (
+    Path(args.output_path) if args.output_path else weights_path.parent / "model.keras"
+)
 
 if output_path.exists():
     answer = input(f"{output_path} already exists. Overwrite? [y/N] ")

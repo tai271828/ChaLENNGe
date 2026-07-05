@@ -75,7 +75,9 @@ def _backbone_model(model: keras.Model) -> keras.Model:
     Walks the layer list and returns the output of the last layer before
     the AlgReconstruction node.
     """
-    alg_layer = next((l for l in model.layers if isinstance(l, AlgReconstruction)), None)
+    alg_layer = next(
+        (l for l in model.layers if isinstance(l, AlgReconstruction)), None
+    )
     if alg_layer is None:
         raise ValueError("No AlgReconstruction layer found in model")
 
@@ -85,7 +87,10 @@ def _backbone_model(model: keras.Model) -> keras.Model:
         fpred_tensor = alg_layer._inbound_nodes[0].input_tensors[1]
         return keras.Model(inputs=model.input, outputs=fpred_tensor)
     except Exception as e:
-        raise RuntimeError(f"Could not extract backbone output tensor: {e}. " "Try Keras >= 3.0 functional API.") from e
+        raise RuntimeError(
+            f"Could not extract backbone output tensor: {e}. "
+            "Try Keras >= 3.0 functional API."
+        ) from e
 
 
 def inspect_lenn_equivariance(
@@ -113,7 +118,9 @@ def inspect_lenn_equivariance(
     print("── Stage 1: LENN backbone (before AlgReconstruction) ─────────────")
     try:
         backbone = _backbone_model(model)
-        r1 = _check_equivariance("backbone", lambda f: predict(backbone, f), fpre, tol_backbone)
+        r1 = _check_equivariance(
+            "backbone", lambda f: predict(backbone, f), fpre, tol_backbone
+        )
         worst1 = max(r1.values())
         print(f"  → worst residual: {worst1:.2e}\n")
     except Exception as e:
@@ -173,6 +180,8 @@ def inspect_lenn_equivariance(
         if worst3 <= 1e-12:
             print("\n  → All stages at machine precision. ✓")
         elif worst1 < 1e-12 and worst2 > 1e-10:
-            print("\n  → Violation originates in AlgReconstruction (not D4-equivariant).")
+            print(
+                "\n  → Violation originates in AlgReconstruction (not D4-equivariant)."
+            )
         elif worst1 > 1e-10:
             print("\n  → Violation already present in the LENN backbone.")

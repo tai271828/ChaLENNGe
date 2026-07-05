@@ -13,7 +13,12 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import keras
-from keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau, TensorBoard
+from keras.callbacks import (
+    EarlyStopping,
+    ModelCheckpoint,
+    ReduceLROnPlateau,
+    TensorBoard,
+)
 from sklearn.model_selection import train_test_split
 
 from lbm_ml.data.generation import load_data
@@ -67,7 +72,9 @@ def load_training_data(
     logger.info("  -> Done.")
 
     logger.info("Splitting train/test...")
-    fpre_train, fpre_test, fpost_train, fpost_test = train_test_split(fpre, fpost, test_size=test_size, shuffle=True)
+    fpre_train, fpre_test, fpost_train, fpost_test = train_test_split(
+        fpre, fpost, test_size=test_size, shuffle=True
+    )
     logger.info("  -> %d train / %d test samples", len(fpre_train), len(fpre_test))
 
     return fpre_train, fpre_test, fpost_train, fpost_test
@@ -117,9 +124,19 @@ def fit_model(
         _start_tensorboard(tb_log)
 
     callbacks = [
-        ReduceLROnPlateau(monitor="val_loss", factor=0.5, patience=patience // 3, min_lr=1e-7, verbose=1),
-        EarlyStopping(monitor="val_loss", patience=patience, restore_best_weights=True, verbose=1),
-        ModelCheckpoint(filepath=str(paths["weights"]), monitor="val_loss", save_best_only=True),
+        ReduceLROnPlateau(
+            monitor="val_loss",
+            factor=0.5,
+            patience=patience // 3,
+            min_lr=1e-7,
+            verbose=1,
+        ),
+        EarlyStopping(
+            monitor="val_loss", patience=patience, restore_best_weights=True, verbose=1
+        ),
+        ModelCheckpoint(
+            filepath=str(paths["weights"]), monitor="val_loss", save_best_only=True
+        ),
         TensorBoard(log_dir=str(tb_log), histogram_freq=1),
     ]
 

@@ -73,7 +73,9 @@ D4_ELEMENTS: list[tuple[str, Callable]] = [
 
 
 def _latest_run_dir(model_name: str) -> Path:
-    matches = sorted(ARTIFACTS_DIR.glob(f"{model_name}_*"), key=lambda p: p.stat().st_mtime)
+    matches = sorted(
+        ARTIFACTS_DIR.glob(f"{model_name}_*"), key=lambda p: p.stat().st_mtime
+    )
     if not matches:
         raise FileNotFoundError(f"No runs for '{model_name}' in {ARTIFACTS_DIR}")
     return matches[-1]
@@ -84,7 +86,9 @@ def _load_model(run_dir: Path) -> Model:
     model_path = run_dir / "model.keras"
     if not model_path.exists():
         raise FileNotFoundError(f"model.keras not found in {run_dir}")
-    return cast(Model, models.load_model(str(model_path), custom_objects={"rmsre": rmsre}))
+    return cast(
+        Model, models.load_model(str(model_path), custom_objects={"rmsre": rmsre})
+    )
 
 
 def _get_samples(dataset_path: Path | None, n: int) -> np.ndarray:
@@ -140,7 +144,10 @@ def run_checks(
     n = fpre.shape[0]
     print(f"Samples  : {n}\n")
 
-    fpost = np.array(model.predict(fpre, verbose=cast(str, 0), batch_size=batch_size), dtype=np.float64)
+    fpost = np.array(
+        model.predict(fpre, verbose=cast(str, 0), batch_size=batch_size),
+        dtype=np.float64,
+    )
 
     all_passed = True
 
@@ -149,9 +156,19 @@ def run_checks(
 
     # Mass and both momentum components must be identical pre- and post-collision.
     # AlgReconstruction enforces these algebraically, so expect near-machine-epsilon errors.
-    all_passed &= _row("mass  Σf_post = Σf_pre", fpost.sum(axis=1) - fpre.sum(axis=1), tol_conservation)
-    all_passed &= _row("x-momentum  Σf·cx conserved", fpost @ C[:, 0] - fpre @ C[:, 0], tol_conservation)
-    all_passed &= _row("y-momentum  Σf·cy conserved", fpost @ C[:, 1] - fpre @ C[:, 1], tol_conservation)
+    all_passed &= _row(
+        "mass  Σf_post = Σf_pre", fpost.sum(axis=1) - fpre.sum(axis=1), tol_conservation
+    )
+    all_passed &= _row(
+        "x-momentum  Σf·cx conserved",
+        fpost @ C[:, 0] - fpre @ C[:, 0],
+        tol_conservation,
+    )
+    all_passed &= _row(
+        "y-momentum  Σf·cy conserved",
+        fpost @ C[:, 1] - fpre @ C[:, 1],
+        tol_conservation,
+    )
 
     # ── 2. D4 equivariance ─────────────────────────────────────────────────
     print("\n── D4 Equivariance  |model(g·f) − g·model(f)|  (per-sample L∞) ──────")
@@ -159,7 +176,10 @@ def run_checks(
     # Equivariance condition: model(g(f)) == g(model(f)).
     # identity is trivially exact; real signal is in the remaining 7 elements.
     for name, g in D4_ELEMENTS:
-        pred_gf = np.array(model.predict(g(fpre), verbose=cast(str, 0), batch_size=batch_size), dtype=np.float64)
+        pred_gf = np.array(
+            model.predict(g(fpre), verbose=cast(str, 0), batch_size=batch_size),
+            dtype=np.float64,
+        )
         residual = np.abs(pred_gf - g(fpost)).max(axis=1)
         all_passed &= _row(name, residual, tol_symmetry)
 
@@ -176,15 +196,30 @@ def run_checks(
 
 
 def _parse_args():
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     p.add_argument(
         "--model",
         default="lenn",
         help="Model name used to locate the latest run directory (default: lenn)",
     )
-    p.add_argument("--run-dir", default=None, help="Explicit run directory containing model.keras (overrides --model)")
-    p.add_argument("--dataset", default=None, help=".npz dataset file; omit to generate fresh samples")
-    p.add_argument("--n-samples", type=int, default=1000, help="Number of test samples (default: 1000)")
+    p.add_argument(
+        "--run-dir",
+        default=None,
+        help="Explicit run directory containing model.keras (overrides --model)",
+    )
+    p.add_argument(
+        "--dataset",
+        default=None,
+        help=".npz dataset file; omit to generate fresh samples",
+    )
+    p.add_argument(
+        "--n-samples",
+        type=int,
+        default=1000,
+        help="Number of test samples (default: 1000)",
+    )
     p.add_argument(
         "--tol-conservation",
         type=float,
@@ -197,8 +232,17 @@ def _parse_args():
         default=1e-15,
         help="Absolute tolerance for D4 equivariance checks (default: 1e-15)",
     )
-    p.add_argument("--batch-size", type=int, default=512, help="Prediction batch size (default: 512)")
-    p.add_argument("--inspect", action="store_true", help="Run stage-by-stage equivariance inspection after checks")
+    p.add_argument(
+        "--batch-size",
+        type=int,
+        default=512,
+        help="Prediction batch size (default: 512)",
+    )
+    p.add_argument(
+        "--inspect",
+        action="store_true",
+        help="Run stage-by-stage equivariance inspection after checks",
+    )
     return p.parse_args()
 
 
@@ -220,7 +264,9 @@ if __name__ == "__main__":
         if run_dir is None:
             run_dir = _latest_run_dir(args.model)
         model = _load_model(run_dir)
-        fpre = _get_samples(Path(args.dataset) if args.dataset else None, args.n_samples)
+        fpre = _get_samples(
+            Path(args.dataset) if args.dataset else None, args.n_samples
+        )
         print("\n")
         inspect_lenn_equivariance(model, fpre, batch_size=args.batch_size)
 

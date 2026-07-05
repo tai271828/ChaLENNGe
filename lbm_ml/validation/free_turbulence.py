@@ -128,7 +128,9 @@ def stream(f: np.ndarray) -> np.ndarray:
     """Periodic streaming: shift each population along its lattice velocity."""
     out = np.empty_like(f)
     for ip in range(Q):
-        out[:, :, ip] = np.roll(np.roll(f[:, :, ip], _c[ip, 0], axis=0), _c[ip, 1], axis=1)
+        out[:, :, ip] = np.roll(
+            np.roll(f[:, :, ip], _c[ip, 0], axis=0), _c[ip, 1], axis=1
+        )
     return out
 
 
@@ -169,7 +171,9 @@ def _guo_source(rho, ux, uy, force, tau) -> np.ndarray:
     return S
 
 
-def bgk_collide(f: np.ndarray, tau: float, force: np.ndarray | None = None) -> np.ndarray:
+def bgk_collide(
+    f: np.ndarray, tau: float, force: np.ndarray | None = None
+) -> np.ndarray:
     """Ground-truth BGK collision, optionally with a Guo body force."""
     rho, ux, uy = macroscopic(f, force)
     feq = _compute_feq(np.empty_like(f), rho, ux, uy, _c, _w)
@@ -234,7 +238,9 @@ def log_derivative(energy: np.ndarray, dt: int = 1) -> np.ndarray:
     return np.gradient(log_e, dt)
 
 
-def aposteriori_error(u_model: np.ndarray, u_truth: np.ndarray, t_max: int | None = None) -> float:
+def aposteriori_error(
+    u_model: np.ndarray, u_truth: np.ndarray, t_max: int | None = None
+) -> float:
     """A-posteriori velocity error, Eq. (50).
 
     Per step: ``sum_x |u_model - u_truth|^2 / sum_x |u_truth|^2`` (space
@@ -308,7 +314,9 @@ def build_turbulent_ic(cfg: TurbulenceConfig) -> np.ndarray:
     return f
 
 
-def run_free_decay(f0: np.ndarray, collide_fn, cfg: TurbulenceConfig, desc: str = "decay"):
+def run_free_decay(
+    f0: np.ndarray, collide_fn, cfg: TurbulenceConfig, desc: str = "decay"
+):
     """Freely decay ``f0`` (force off) with a given collision operator.
 
     ``collide_fn(f) -> f_post`` is any collision (e.g. ``lambda f: bgk_collide(
@@ -363,7 +371,9 @@ class ModelResult:
     rate_rel_error: float = float("nan")
 
 
-def run_validation(cfg: TurbulenceConfig, models: dict[str, object]) -> dict[str, ModelResult]:
+def run_validation(
+    cfg: TurbulenceConfig, models: dict[str, object]
+) -> dict[str, ModelResult]:
     """Run the full freely-decaying turbulence comparison.
 
     Parameters
@@ -385,11 +395,15 @@ def run_validation(cfg: TurbulenceConfig, models: dict[str, object]) -> dict[str
     results: dict[str, ModelResult] = {}
 
     # Ground-truth BGK first — it is the reference for every error metric.
-    e, v, d = run_free_decay(f0, lambda f: bgk_collide(f, cfg.tau), cfg, desc="decay [bgk]")
+    e, v, d = run_free_decay(
+        f0, lambda f: bgk_collide(f, cfg.tau), cfg, desc="decay [bgk]"
+    )
     results["bgk"] = ModelResult("bgk", e, v, d)
 
     for label, model in models.items():
-        e, v, d = run_free_decay(f0, lambda f, m=model: ml_collide(f, m), cfg, desc=f"decay [{label}]")
+        e, v, d = run_free_decay(
+            f0, lambda f, m=model: ml_collide(f, m), cfg, desc=f"decay [{label}]"
+        )
         results[label] = ModelResult(label, e, v, d)
 
     # Derived metrics, referenced to BGK.
@@ -409,6 +423,8 @@ def run_validation(cfg: TurbulenceConfig, models: dict[str, object]) -> dict[str
         ld = log_derivative(r.energy)
         r.mean_log_deriv = float(np.nanmean(ld[t0:t1]))
         if np.isfinite(r.mean_log_deriv) and abs(ref.mean_log_deriv) > 0:
-            r.rate_rel_error = abs(r.mean_log_deriv - ref.mean_log_deriv) / abs(ref.mean_log_deriv)
+            r.rate_rel_error = abs(r.mean_log_deriv - ref.mean_log_deriv) / abs(
+                ref.mean_log_deriv
+            )
 
     return results

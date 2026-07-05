@@ -20,6 +20,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "jupyter",
+    "pytest>=9.1.1",
 ]
 
 [tool.setuptools.packages.find]

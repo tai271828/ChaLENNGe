@@ -83,7 +83,9 @@ def _eval_model(
     model: keras.Model = keras.models.load_model(
         str(model_path), custom_objects={"rmsre": rmsre}
     )  # pyright: ignore[reportAssignmentType]
-    fpred = model.predict(fpre, verbose=0, batch_size=512)  # pyright: ignore[reportArgumentType]
+    fpred = model.predict(
+        fpre, verbose=0, batch_size=512
+    )  # pyright: ignore[reportArgumentType]
     per_sample: np.ndarray = rmsre(
         fpost, fpred
     ).numpy()  # pyright: ignore[reportAttributeAccessIssue,reportAssignmentType]
@@ -96,19 +98,45 @@ def _build_df(results: list[tuple[str, float, float, dict[str, str]]]) -> pd.Dat
     """Build a DataFrame from evaluated results, expanding meta into columns."""
     rows = []
     for title, mean, stderr, meta in results:
-        row = {"model": title, "RMSRE": _sci_fmt(mean, stderr), "rmsre_mean": mean, "rmsre_stderr": stderr}
+        row = {
+            "model": title,
+            "RMSRE": _sci_fmt(mean, stderr),
+            "rmsre_mean": mean,
+            "rmsre_stderr": stderr,
+        }
         row.update(meta)
         rows.append(row)
     return pd.DataFrame(rows)
 
 
 def main():
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("models", nargs="+", help="Paths to model.keras files or folders containing submodel directories")
-    p.add_argument("--data", metavar="PATH", help=".npz dataset or simulation directory (skips generation)")
-    p.add_argument("--n-samples", type=int, default=10_000, help="Number of samples to evaluate on (default: 10 000)")
-    p.add_argument("--sort", choices=["asc", "desc"], help="Sort results by RMSRE (asc: best first, desc: worst first)")
-    p.add_argument("--save", metavar="PATH", help="Save results to PATH.md and PATH.csv")
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    p.add_argument(
+        "models",
+        nargs="+",
+        help="Paths to model.keras files or folders containing submodel directories",
+    )
+    p.add_argument(
+        "--data",
+        metavar="PATH",
+        help=".npz dataset or simulation directory (skips generation)",
+    )
+    p.add_argument(
+        "--n-samples",
+        type=int,
+        default=10_000,
+        help="Number of samples to evaluate on (default: 10 000)",
+    )
+    p.add_argument(
+        "--sort",
+        choices=["asc", "desc"],
+        help="Sort results by RMSRE (asc: best first, desc: worst first)",
+    )
+    p.add_argument(
+        "--save", metavar="PATH", help="Save results to PATH.md and PATH.csv"
+    )
     args = p.parse_args()
 
     K.set_floatx("float64")
@@ -172,7 +200,9 @@ def main():
         save_path = Path(args.save)
         df[csv_cols].to_csv(save_path.with_suffix(".csv"), index=False)
         df[display_cols].to_markdown(save_path.with_suffix(".md"), index=False)
-        print(f"Saved {save_path.with_suffix('.md')} and {save_path.with_suffix('.csv')}")
+        print(
+            f"Saved {save_path.with_suffix('.md')} and {save_path.with_suffix('.csv')}"
+        )
 
 
 if __name__ == "__main__":
