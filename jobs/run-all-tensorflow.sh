@@ -97,15 +97,24 @@ echo "[job] CPUs allocated: ${NCPU}"
 # `uv run` activates .venv automatically and uses uv.lock for reproducibility.
 # -u flushes stdout so the .out file streams instead of buffering.
 
-# Allow the following env vars to override the defaults for quick experimentation 
+# Allow the following env vars to override the defaults for quick experimentation
 BATCH_SIZE="${BATCH_SIZE:-32}"
 N_EPOCHS="${N_EPOCHS:-200}"
 MODEL="${MODEL:-d4equivariant}"
 PATIENCE="${PATIENCE:-50}"
 LR="${LR:-1e-3}"
-RUN_NAME="${RUN_NAME:-${MODEL}_bs${BATCH_SIZE}_ep${N_EPOCHS}_pat${PATIENCE}_lr${LR}}"
-echo "[job] Launching run-all-tensorflow.py (BATCH_SIZE=${BATCH_SIZE}, MODEL=${MODEL}, N_EPOCHS=${N_EPOCHS}, PATIENCE=${PATIENCE}, LR=${LR}, RUN_NAME=${RUN_NAME})..."
-uv run run_all.py --model "${MODEL}" --batch-size "${BATCH_SIZE}" --n-epochs "${N_EPOCHS}" --patience "${PATIENCE}" --learning-rate "${LR}" --run-name "${RUN_NAME}"
+SEED="${SEED:-}"                        # set for comparison-grade runs (00-README rule 4)
+DATA_DIR="${DATA_DIR:-}"                # fpre/fpost .npy dir (e.g. KVS every_100); empty = synthetic
+SAMPLES_PER_STEP="${SAMPLES_PER_STEP:-}"  # e.g. 334 for the KVS runs
+RUN_NAME="${RUN_NAME:-${MODEL}_bs${BATCH_SIZE}_ep${N_EPOCHS}_pat${PATIENCE}_lr${LR}${SEED:+_seed${SEED}}}"
+
+EXTRA_ARGS=()
+[[ -n "$SEED" ]] && EXTRA_ARGS+=(--seed "$SEED")
+[[ -n "$DATA_DIR" ]] && EXTRA_ARGS+=(--data-dir "$DATA_DIR")
+[[ -n "$SAMPLES_PER_STEP" ]] && EXTRA_ARGS+=(--samples-per-step "$SAMPLES_PER_STEP")
+
+echo "[job] Launching run_all.py (BATCH_SIZE=${BATCH_SIZE}, MODEL=${MODEL}, N_EPOCHS=${N_EPOCHS}, PATIENCE=${PATIENCE}, LR=${LR}, SEED=${SEED:-<none>}, DATA_DIR=${DATA_DIR:-<synthetic>}, RUN_NAME=${RUN_NAME})..."
+uv run run_all.py --model "${MODEL}" --batch-size "${BATCH_SIZE}" --n-epochs "${N_EPOCHS}" --patience "${PATIENCE}" --learning-rate "${LR}" --run-name "${RUN_NAME}" "${EXTRA_ARGS[@]}"
 
 RUN_RC=$?
 

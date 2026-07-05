@@ -639,6 +639,15 @@ MODEL_REGISTRY: dict[str, Callable[..., keras.Model]] = {
         ll_activation="softmax",
         reconstruction=Reconstruction.SYMMETRIC,
     ),
+    # Budget-matched twin of lenn_resnet_18_18_18: 30,042 vs 30,081 free params
+    # (0.13%), so the ResNet-vs-plain comparison isolates the skip connections.
+    "lenn_31_31_31_softmax_cons": partial(
+        create_lenn_model,
+        channels=(31, 31, 31),
+        use_bias=True,
+        ll_activation="softmax",
+        reconstruction=Reconstruction.SYMMETRIC,
+    ),
     "lenn_resnet_softmax_cons": partial(
         create_lenn_resnet_model,
         channels=(8, 8, 8),
@@ -720,6 +729,13 @@ MODEL_REGISTRY: dict[str, Callable[..., keras.Model]] = {
     "lenn_18_18_18_softmax_bounded": partial(
         create_lenn_model,
         channels=(18, 18, 18),
+        use_bias=True,
+        ll_activation="softmax",
+        reconstruction=Reconstruction.BOUNDED,
+    ),
+    "lenn_31_31_31_softmax_bounded": partial(
+        create_lenn_model,
+        channels=(31, 31, 31),
         use_bias=True,
         ll_activation="softmax",
         reconstruction=Reconstruction.BOUNDED,

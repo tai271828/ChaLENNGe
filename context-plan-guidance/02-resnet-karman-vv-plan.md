@@ -65,31 +65,49 @@ of 20 000 steps measured St = 0.28 (confined-geometry expectation
 `min_f_overall ≈ −0.1` for pure BGK — the baseline any positivity comparison
 must beat.
 
-## Step 2 — experiment matrix
+## Step 2 — experiment matrix (budgets verified 2026-07-05)
 
 All models trained on the same KVS dataset (`every_100`, τ=0.5576), same
 budget (epochs/patience/lr/batch as the existing
-`…samp334_bs32_ep12000_pat2000_lr1e-3` runs), **3 seeds each**. Match parameter
-counts within ~10% (check with `uv run python -m eval_helpers.count_model_params`;
-adjust width/channels of the non-resnet twin if needed and record the numbers).
+`…samp334_bs32_ep12000_pat2000_lr1e-3` runs), **seeds 0, 1, 2** via
+`run_all.py --seed` (seeds python/numpy/TF; recorded in the run's
+`manifest.json`).
 
-| # | Model (registry name) | Role |
-|---|----------------------|------|
-| 1 | `lenn_18_18_18_softmax_cons` | LENN baseline |
-| 2 | `lenn_resnet_18_18_18_softmax_cons` | LENN + residual (H1 treatment) |
-| 3 | `d4equivariant_softmax_cons` | GAVG baseline |
-| 4 | `resnet_softmax_cons` | GAVG + residual (H1 treatment) |
-| 5 | `plain_2_softmax` | negative control (should degrade/diverge) |
-| 6 | pure BGK (no NN) | ground-truth control for St, E(t), horizon |
+**Budget audit result:** the naive pairs are invalid — `lenn_18_18_18`
+(10,425 params) vs `lenn_resnet_18_18_18` (30,081) is a **2.9×** mismatch
+that confounds "ResNet" with "bigger"; `d4equivariant` (5,900) vs `resnet`
+(10,900) is 1.85×. The matrix below uses budget-matched twins (verify anytime
+with `uv run python -m eval_helpers.count_model_params`):
+
+| # | Model (registry name) | Free params | Role |
+|---|----------------------|------------:|------|
+| 1 | `lenn_31_31_31_softmax_cons` | 30,042 | LENN baseline (twin of row 2, Δ0.13%) |
+| 2 | `lenn_resnet_18_18_18_softmax_cons` | 30,081 | LENN + residual (H1 treatment) |
+| 3 | `d4equivariant_10K_wide_softmax_cons` | 10,764 | GAVG baseline (twin of row 4, Δ1.3%) |
+| 4 | `resnet_softmax_cons` | 10,900 | GAVG + residual (H1 treatment) |
+| 5 | `plain_2_softmax` | 3,400 | negative control (should degrade/diverge) |
+| 6 | pure BGK (`apply_nn_karman.py --bgk-only`) | — | ground-truth control (`eval_results_bgk_control/`) |
+| 7 | `lenn_31_31_31_softmax_bounded` | 30,045 | Stage A bounded head (doc 03; +3 params vs row 1) |
 
 Use the `_softmax_cons` reconstruction family throughout (paper method, keeps
-positivity + conservation comparable across rows). If checkpoints for some rows
-already exist in the external data folder, reuse them for seed 1 **only if**
-their training config matches; record this in the manifest.
+positivity + conservation comparable across rows); row 7 tests the Stage A
+bound against row 1. The old `lenn_18_18_18` / `lenn_resnet` checkpoints are
+**not** reusable for this matrix (unseeded, unmatched, no manifest).
 
-Training (per row × seed) on Snellius: `run_all.py` with `--data-dir` pointing
-at the KVS `every_100` snapshots — see `jobs/run-all-tensorflow.sh` and
-`scripts/job-gpu-*.sh` for the submission pattern. Evaluation (per checkpoint):
+Training (per row × seed) on Snellius, from the project root:
+
+```bash
+for SEED in 0 1 2; do
+  sbatch --export=ALL,MODEL=lenn_31_31_31_softmax_cons,SEED=$SEED,\
+DATA_DIR=/path/to/karman/every_100,SAMPLES_PER_STEP=334,\
+BATCH_SIZE=32,N_EPOCHS=12000,PATIENCE=2000,LR=1e-3 \
+    jobs/run-all-tensorflow.sh
+done   # repeat with MODEL= rows 2, 3, 4, 5, 7
+```
+
+Each run writes `manifest.json` (model, params, seed, data, hyperparams, git
+commit) into its run dir under the per-job artifacts tree. Evaluation (per
+checkpoint):
 
 ```bash
 uv run python apply_nn_karman.py --animate --anim-steps 30000 --update-steps 100 \

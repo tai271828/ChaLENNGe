@@ -9,6 +9,7 @@ Select the model with --model (or by editing MODEL_NAME below):
 import argparse
 import datetime
 import logging
+import os
 import sys
 import matplotlib
 from tqdm import tqdm
@@ -26,6 +27,7 @@ from lbm_ml.data.generation import generate_dataset
 from lbm_ml.lattice.stencil import LB_stencil
 from lbm_ml.model.losses import rmsre
 from lbm_ml.model.network import MODEL_REGISTRY
+from lbm_ml.provenance import write_manifest
 from lbm_ml.training import fit_model, load_training_data
 
 # ---------------------------------------------------------------------------
@@ -48,12 +50,24 @@ def setup_logging(verbose: bool = True) -> None:
 # ---------------------------------------------------------------------------
 # Artifact paths
 # ---------------------------------------------------------------------------
-ARTIFACTS_DIR = Path(__file__).resolve().parent / "artifacts-run-all-tensorflow"
+# RUN_ALL_TF_ARTIFACTS_DIR (set by jobs/run-all-tensorflow.sh) isolates
+# concurrent Slurm jobs into per-job subdirectories so they don't clobber
+# each other's datasets/weights/logs.
+ARTIFACTS_DIR = Path(
+    os.environ.get(
+        "RUN_ALL_TF_ARTIFACTS_DIR",
+        Path(__file__).resolve().parent / "artifacts-run-all-tensorflow",
+    )
+)
 
 
 def _make_run_dir(model_name: str, run_name: str | None, timestamp: str) -> Path:
     """Create and return artifacts-run-all-tensorflow/<model>[_<name>]_<timestamp>/."""
-    stem = f"{model_name}_{run_name}_{timestamp}" if run_name else f"{model_name}_{timestamp}"
+    stem = (
+        f"{model_name}_{run_name}_{timestamp}"
+        if run_name
+        else f"{model_name}_{timestamp}"
+    )
     d = ARTIFACTS_DIR / stem
     d.mkdir(parents=True, exist_ok=True)
     (d / "velocity_fields").mkdir(exist_ok=True)
@@ -73,9 +87,13 @@ def _run_paths(run_dir: Path) -> dict[str, Path]:
 
 def _latest_run_dir(model_name: str) -> Path:
     """Return the most-recently modified run directory for a given model."""
-    matches = sorted(ARTIFACTS_DIR.glob(f"{model_name}_*"), key=lambda p: p.stat().st_mtime)
+    matches = sorted(
+        ARTIFACTS_DIR.glob(f"{model_name}_*"), key=lambda p: p.stat().st_mtime
+    )
     if not matches:
-        raise FileNotFoundError(f"No runs found for model '{model_name}' in {ARTIFACTS_DIR}")
+        raise FileNotFoundError(
+            f"No runs found for model '{model_name}' in {ARTIFACTS_DIR}"
+        )
     return matches[-1]
 
 
@@ -120,6 +138,7 @@ def train(
     max_steps: int | None = None,
     verbose: bool = True,
     steps_per_execution: int = 1,
+    seed: int | None = None,
 ) -> keras.Model:
     """Load the dataset, train the selected network, and save artifacts under a timestamped run dir.
 
@@ -131,7 +150,9 @@ def train(
     Both paths yield (f_eq, f_pre, f_post) arrays of shape (N, 9).
     """
     if model_name not in MODEL_REGISTRY:
-        raise ValueError(f"Unknown model '{model_name}'. Choose from: {list(MODEL_REGISTRY)}")
+        raise ValueError(
+            f"Unknown model '{model_name}'. Choose from: {list(MODEL_REGISTRY)}"
+        )
 
     K.set_floatx("float64")
 
@@ -158,6 +179,31 @@ def train(
         ll_activation="softmax",
         steps_per_execution=steps_per_execution,
     )
+
+    manifest_path = write_manifest(
+        run_dir,
+        {
+            "model_name": model_name,
+            "free_params": model.count_params(),
+            "seed": seed,  # None == unseeded legacy run (not comparison-grade)
+            "data_dir": data_dir,
+            "dataset_path": None if data_dir is not None else dataset_path,
+            "samples_per_step": samples_per_step,
+            "step_stride": step_stride,
+            "max_steps": max_steps,
+            "n_train": int(fpre_train.shape[0]),
+            "n_test": int(fpre_test.shape[0]),
+            "hyperparams": {
+                "batch_size": batch_size,
+                "n_epochs": n_epochs,
+                "patience": patience,
+                "learning_rate": learning_rate,
+                "loss": "rmsre",
+                "ll_activation": "softmax",
+            },
+        },
+    )
+    logger.info("Manifest: %s", manifest_path)
 
     return fit_model(
         model,
@@ -245,7 +291,9 @@ def simulate(
     for t in tqdm(range(1, niter), desc="Simulating", unit="it"):
         # Streaming
         for ip in range(Q):
-            f1[:, :, ip] = np.roll(np.roll(f2[:, :, ip], c[ip, 0], axis=0), c[ip, 1], axis=1)
+            f1[:, :, ip] = np.roll(
+                np.roll(f2[:, :, ip], c[ip, 0], axis=0), c[ip, 1], axis=1
+            )
 
         rho = np.sum(f1, axis=2)
         ux = (1.0 / rho) * np.einsum("ijk,k", f1, c[:, 0])
@@ -264,7 +312,17 @@ def simulate(
     m_final = np.sum(f2)
     logger.info("Sim ended. Mass err: %.2e", np.abs(m_initial - m_final) / m_initial)
 
-    _plot_results(dumpfile, niter, dumpit, nx, ny, tau, cs2, paths["decay_plot"], paths["fields_dir"])
+    _plot_results(
+        dumpfile,
+        niter,
+        dumpit,
+        nx,
+        ny,
+        tau,
+        cs2,
+        paths["decay_plot"],
+        paths["fields_dir"],
+    )
 
 
 def _plot_results(dumpfile, niter, dumpit, nx, ny, tau, cs2, decay_plot, fields_dir):
@@ -286,7 +344,14 @@ def _plot_results(dumpfile, niter, dumpit, nx, ny, tau, cs2, decay_plot, fields_
         else:
             ax.semilogy(t, Ft, "ob")
 
-    ax.semilogy(tLst, _analytic_decay(tLst, nx, F0, nu), linewidth=2.0, linestyle="--", color="r", label="analytic")
+    ax.semilogy(
+        tLst,
+        _analytic_decay(tLst, nx, F0, nu),
+        linewidth=2.0,
+        linestyle="--",
+        color="r",
+        label="analytic",
+    )
     ax.set_xlabel(r"$t~\rm{[L.U.]}$", fontsize=16)
     ax.set_ylabel(r"$\langle |u| \rangle$", fontsize=16, rotation=90, labelpad=0)
     ax.legend(loc="best", frameon=False, prop={"size": 16})
@@ -319,19 +384,31 @@ def _plot_results(dumpfile, niter, dumpit, nx, ny, tau, cs2, decay_plot, fields_
 
 
 def _parse_args():
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     p.add_argument(
         "--model",
         default=MODEL_NAME,
         choices=list(MODEL_REGISTRY),
         help="Which model architecture to train and simulate with",
     )
-    p.add_argument("--n-epochs", type=int, default=200, help="Maximum number of training epochs")
     p.add_argument(
-        "--patience", type=int, default=50, help="EarlyStopping patience (epochs without val_loss improvement)"
+        "--n-epochs", type=int, default=200, help="Maximum number of training epochs"
+    )
+    p.add_argument(
+        "--patience",
+        type=int,
+        default=50,
+        help="EarlyStopping patience (epochs without val_loss improvement)",
     )
     p.add_argument("--batch-size", type=int, default=32, help="Training batch size")
-    p.add_argument("--learning-rate", type=float, default=1e-3, help="Initial Adam learning rate (default: 1e-3)")
+    p.add_argument(
+        "--learning-rate",
+        type=float,
+        default=1e-3,
+        help="Initial Adam learning rate (default: 1e-3)",
+    )
     p.add_argument(
         "--data-dir",
         default=None,
@@ -348,22 +425,56 @@ def _parse_args():
         "per saved timestep (default: use all ~Nx*Ny nodes).",
     )
     p.add_argument(
-        "--step-stride", type=int, default=1, help="With --data-dir: use every Nth saved timestep (default: 1)."
+        "--step-stride",
+        type=int,
+        default=1,
+        help="With --data-dir: use every Nth saved timestep (default: 1).",
     )
-    p.add_argument("--max-steps", type=int, default=None, help="With --data-dir: cap the number of timesteps loaded.")
-    p.add_argument("--skip-generate", action="store_true", help="Skip dataset generation (reuse existing file)")
-    p.add_argument("--skip-train", action="store_true", help="Skip training (load existing saved model)")
+    p.add_argument(
+        "--max-steps",
+        type=int,
+        default=None,
+        help="With --data-dir: cap the number of timesteps loaded.",
+    )
+    p.add_argument(
+        "--skip-generate",
+        action="store_true",
+        help="Skip dataset generation (reuse existing file)",
+    )
+    p.add_argument(
+        "--skip-train",
+        action="store_true",
+        help="Skip training (load existing saved model)",
+    )
     p.add_argument("--skip-simulate", action="store_true", help="Skip simulation")
     p.add_argument(
-        "--tensorboard", action="store_true", help="Open TensorBoard in browser during training (logs always saved)"
+        "--tensorboard",
+        action="store_true",
+        help="Open TensorBoard in browser during training (logs always saved)",
     )
     p.add_argument(
-        "--run-name", default=None, help="Optional label added to the run directory name (default: timestamp only)"
+        "--run-name",
+        default=None,
+        help="Optional label added to the run directory name (default: timestamp only)",
     )
     p.add_argument(
-        "--run-dir", default=None, help="Explicit run directory to simulate from (default: latest run for --model)"
+        "--run-dir",
+        default=None,
+        help="Explicit run directory to simulate from (default: latest run for --model)",
     )
-    p.add_argument("--quiet", action="store_true", help="Suppress INFO logging (show WARNING+ only)")
+    p.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Seed python/numpy/TF RNGs (keras.utils.set_random_seed) for reproducible "
+        "weight init, shuffling, and node sub-sampling. Required for any "
+        "architecture comparison (context-plan-guidance/00-README.md rule 4).",
+    )
+    p.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Suppress INFO logging (show WARNING+ only)",
+    )
     p.add_argument(
         "--steps-per-execution",
         type=int,
@@ -376,6 +487,10 @@ def _parse_args():
 if __name__ == "__main__":
     args = _parse_args()
     setup_logging(verbose=not args.quiet)
+
+    if args.seed is not None:
+        keras.utils.set_random_seed(args.seed)  # python + numpy + backend RNGs
+        logger.info("Seeded RNGs with %d", args.seed)
 
     timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     run_dir = _make_run_dir(args.model, args.run_name, timestamp)
@@ -404,6 +519,7 @@ if __name__ == "__main__":
             max_steps=args.max_steps,
             verbose=not args.quiet,
             steps_per_execution=args.steps_per_execution,
+            seed=args.seed,
         )
     if not args.skip_simulate:
         sim_run_dir = Path(args.run_dir) if args.run_dir else run_dir

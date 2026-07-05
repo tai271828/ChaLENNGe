@@ -50,12 +50,8 @@ from __future__ import annotations
 
 import argparse
 import glob
-import hashlib
 import json
 import os
-import subprocess
-import sys
-from datetime import datetime, timezone
 
 import matplotlib
 
@@ -72,6 +68,7 @@ import lbm_ml.model.network  # noqa: F401
 import lbm_ml.lattice.symmetry  # noqa: F401
 from lbm_ml.lattice.stencil import LB_stencil
 from lbm_ml.model.losses import rmsre
+from lbm_ml.provenance import sha256, write_manifest
 
 # D2Q9 stencil (channel order matches the network's expected ordering).
 _c, _w, _cs2, _compute_feq = LB_stencil()
@@ -142,60 +139,36 @@ def compute_strouhal(uy_series: np.ndarray, warmup_frac: float, D: float, U: flo
     return f_shed * D / U, f_shed, amplitude
 
 
-def _git_commit() -> str | None:
-    """Current repo commit hash, or None if git is unavailable."""
-    try:
-        return subprocess.check_output(
-            ["git", "rev-parse", "HEAD"],
-            cwd=os.path.dirname(os.path.abspath(__file__)),
-            text=True,
-            stderr=subprocess.DEVNULL,
-        ).strip()
-    except Exception:
-        return None
-
-
-def _sha256(path: str) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as fh:
-        for chunk in iter(lambda: fh.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
-def write_manifest(args, Nx: int, Ny: int, tau: float, nu: float) -> None:
+def write_run_manifest(args, Nx: int, Ny: int, tau: float, nu: float) -> None:
     """Record everything needed to reproduce this run in <out-dir>/manifest.json."""
-    manifest = {
-        "created_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "command": " ".join(sys.argv),
-        "git_commit": _git_commit(),
-        "model_path": args.model_path,
-        "model_sha256": _sha256(args.model_path) if args.model_path else None,
-        "data_dir": args.data_dir,
-        "seed": args.seed,
-        "bgk_only": args.bgk_only,
-        "physics": {
-            "res": args.res,
-            "re": args.re,
-            "u_inlet": args.u_inlet,
-            "tau": tau,
-            "nu": nu,
-            "grid": [Nx, Ny],
+    path = write_manifest(
+        args.out_dir,
+        {
+            "model_path": args.model_path,
+            "model_sha256": sha256(args.model_path) if args.model_path else None,
+            "data_dir": args.data_dir,
+            "seed": args.seed,
+            "bgk_only": args.bgk_only,
+            "physics": {
+                "res": args.res,
+                "re": args.re,
+                "u_inlet": args.u_inlet,
+                "tau": tau,
+                "nu": nu,
+                "grid": [Nx, Ny],
+            },
+            "run": {
+                "anim_steps": args.anim_steps,
+                "snap_every": args.snap_every,
+                "snap_after": args.snap_after,
+                "update_steps": args.update_steps,
+                "batch_size": args.batch_size,
+                "warmup_frac": args.warmup_frac,
+                "probe_x": args.probe_x,
+                "probe_y": args.probe_y,
+            },
         },
-        "run": {
-            "anim_steps": args.anim_steps,
-            "snap_every": args.snap_every,
-            "snap_after": args.snap_after,
-            "update_steps": args.update_steps,
-            "batch_size": args.batch_size,
-            "warmup_frac": args.warmup_frac,
-            "probe_x": args.probe_x,
-            "probe_y": args.probe_y,
-        },
-    }
-    path = os.path.join(args.out_dir, "manifest.json")
-    with open(path, "w") as fh:
-        json.dump(manifest, fh, indent=2)
+    )
     print(f"Manifest -> {path}")
 
 
@@ -697,7 +670,7 @@ def main() -> None:
     np.random.seed(args.seed)
 
     Nx, Ny, _, tau, nu = karman_geometry(args.res, args.u_inlet, args.re)
-    write_manifest(args, Nx, Ny, tau, nu)
+    write_run_manifest(args, Nx, Ny, tau, nu)
 
     K.set_floatx("float64")
     if args.bgk_only:
