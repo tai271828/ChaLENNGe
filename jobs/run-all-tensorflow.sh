@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=lbm-tf
-#SBATCH --partition=gpu_h100
+#SBATCH --partition=genoa
 #SBATCH --nodes=1
-#SBATCH --gpus=1
+#SBATCH --gpus=0
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=16
-#SBATCH --time=01:00:00
+#SBATCH --cpus-per-task=24
+#SBATCH --time=24:00:00
 #SBATCH --output=jobs/logs/%x-%j.out
 #SBATCH --error=jobs/logs/%x-%j.err
 #
